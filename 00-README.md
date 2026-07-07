@@ -15,6 +15,7 @@
 | 00 | 本 README | 文档导航与全局速览 |
 | 01 | [框架透视图解](./01-框架透视图解.md) | 双层架构、目录结构、分层依赖关系总图、执行链路鸟瞰 |
 | 02 | [并行化子系统](./02-并行化子系统.md) | `parallel_state` / TP / PP / CP / EP，并行组的构造与通信 |
+| 02.5 | [优化器数学原理与对比](./02.5-优化器数学原理与对比.md) | SGD / Adam / Muon 公式与对比（02.1 §2.6 的补充） |
 | 03 | [Transformer 与模型子系统](./03-Transformer与模型子系统.md) | Spec 机制、TransformerBlock/Layer、GPT/Mamba/Hybrid/MoE/多模态 |
 | 04 | [分布式训练与优化器](./04-分布式训练与优化器.md) | DDP / FSDP、梯度桶、DistributedOptimizer、梯度裁剪与缩放 |
 | 05 | [数据集与分词器](./05-数据集与分词器.md) | IndexedDataset、BlendedDataset、GPTDataset、tokenizers |
