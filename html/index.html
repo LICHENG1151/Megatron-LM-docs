@@ -1,0 +1,1230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>分布式训练系统入门 · 从通信原语到并行策略</title>
+<style>
+  :root{
+    --bg:#0b1020; --bg2:#121a33; --panel:#16203c; --panel2:#1d2a4d;
+    --ink:#e8edf7; --muted:#9fb0d0; --line:#2a3a63;
+    --accent:#5b8cff; --accent2:#38e1c4; --warn:#ffb454; --danger:#ff6b7a;
+    --green:#46d17f; --purple:#b98cff; --pink:#ff7fd0;
+    --mono:"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,"PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;}
+  body{background:#05070f;color:var(--ink);font-family:var(--sans);overflow:hidden;
+    display:flex;align-items:center;justify-content:center;}
+  #viewport{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}
+  .deck{position:relative;width:1280px;height:720px;overflow:hidden;
+    transform:scale(var(--sc,1));transform-origin:center center;
+    background:radial-gradient(1200px 800px at 20% -10%,#1a2547 0%,var(--bg) 55%);
+    box-shadow:0 30px 80px rgba(0,0,0,.6);border-radius:6px;}
+  .slide{position:absolute;inset:0;display:none;flex-direction:column;
+    padding:30px 52px 54px;opacity:0;transition:opacity .3s ease;overflow:hidden;}
+  .slide.active{display:flex;opacity:1;}
+  .slide h1{font-size:2.9rem;line-height:1.12;}
+  .slide h2{font-size:1.9rem;margin-bottom:12px;display:flex;align-items:center;gap:12px;}
+  .slide h2 .num{font-family:var(--mono);font-size:1rem;color:var(--bg);
+    background:linear-gradient(135deg,var(--accent),var(--accent2));padding:3px 10px;border-radius:8px;font-weight:700;}
+  .lead{color:var(--muted);font-size:1.1rem;line-height:1.6;}
+  .grid{display:grid;gap:16px;}
+  .cols-2{grid-template-columns:1fr 1fr;}
+  .cols-3{grid-template-columns:repeat(3,1fr);}
+  .cols-4{grid-template-columns:repeat(4,1fr);}
+  .cols-5{grid-template-columns:repeat(5,1fr);}
+  .fill{flex:1;min-height:0;}
+  .card{background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--line);
+    border-radius:15px;padding:16px 18px;}
+  .card h3{font-size:1.15rem;margin-bottom:7px;display:flex;align-items:center;gap:8px;}
+  .card p,.card li{color:var(--muted);font-size:.98rem;line-height:1.55;}
+  .card ul{margin-left:17px;}.card li{margin:4px 0;}
+  .tag{display:inline-block;font-family:var(--mono);font-size:.76rem;padding:2px 9px;border-radius:999px;
+    border:1px solid var(--line);color:var(--muted);margin:2px 4px 2px 0;}
+  b,strong{color:var(--ink);}
+  .k{color:var(--accent2);font-family:var(--mono);}
+  .hl{color:var(--warn);}
+  code{font-family:var(--mono);background:#0d1428;border:1px solid var(--line);padding:1px 6px;border-radius:6px;color:var(--accent2);font-size:.9em;}
+  .foot{position:absolute;bottom:0;left:0;right:0;height:32px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 22px;font-family:var(--mono);font-size:.78rem;color:var(--muted);border-top:1px solid var(--line);
+    background:rgba(11,16,32,.6);z-index:40;}
+  .foot .title{color:var(--ink);opacity:.8;}
+  .progress{position:absolute;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));z-index:50;transition:width .3s;}
+  .hint{position:absolute;bottom:38px;right:16px;font-size:.68rem;color:var(--muted);font-family:var(--mono);opacity:.5;z-index:40;}
+  .note{border-left:3px solid var(--accent);padding:8px 13px;background:rgba(91,140,255,.08);border-radius:0 10px 10px 0;color:var(--muted);font-size:.92rem;line-height:1.5;}
+  .note.warn{border-color:var(--warn);background:rgba(255,180,84,.08);}
+  .note.good{border-color:var(--green);background:rgba(70,209,127,.08);}
+  table.mtx{width:100%;border-collapse:collapse;font-size:.92rem;}
+  table.mtx th,table.mtx td{border:1px solid var(--line);padding:7px 9px;text-align:center;}
+  table.mtx th{background:var(--panel2);color:var(--ink);}
+  table.mtx td{color:var(--muted);} table.mtx td b{color:var(--ink);}
+
+  /* cover */
+  .cover{justify-content:center;align-items:flex-start;}
+  .cover .kicker{font-family:var(--mono);color:var(--accent2);letter-spacing:3px;text-transform:uppercase;font-size:.9rem;margin-bottom:16px;}
+  .cover h1{font-size:3.8rem;background:linear-gradient(120deg,#fff,#9fc0ff 60%,var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent;}
+  .cover .sub{margin-top:20px;font-size:1.25rem;color:var(--muted);}
+  .cover .meta{margin-top:34px;display:flex;gap:10px;flex-wrap:wrap;}
+  .cover .meta .tag{font-size:.88rem;padding:6px 13px;}
+
+  /* section divider */
+  .divider{justify-content:center;align-items:flex-start;}
+  .divider .part{font-family:var(--mono);color:var(--accent);letter-spacing:2px;font-size:1.1rem;}
+  .divider h1{font-size:3.4rem;margin-top:10px;}
+  .divider .desc{margin-top:18px;color:var(--muted);font-size:1.2rem;max-width:760px;line-height:1.6;}
+
+  /* agenda */
+  .agenda{display:grid;grid-template-columns:1fr 1fr;gap:8px 40px;}
+  .agenda .grp{padding:8px 0;}
+  .agenda .grp h4{color:var(--accent2);font-family:var(--mono);font-size:.9rem;margin-bottom:6px;}
+  .agenda .item{display:flex;gap:12px;align-items:baseline;padding:7px 0;border-bottom:1px dashed var(--line);}
+  .agenda .item .idx{font-family:var(--mono);color:var(--accent);font-weight:700;width:26px;}
+  .agenda .item .t{font-size:1.05rem;}
+
+  /* four-characteristic panel */
+  .four{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .four .f{border:1px solid var(--line);border-radius:11px;padding:10px 12px;background:var(--panel);}
+  .four .f .h{font-size:.82rem;font-family:var(--mono);letter-spacing:1px;margin-bottom:4px;text-transform:uppercase;}
+  .four .f p{font-size:.9rem;line-height:1.45;}
+  .f.comm .h{color:var(--accent);} .f.comp .h{color:var(--accent2);}
+  .f.over .h{color:var(--green);} .f.aff .h{color:var(--warn);}
+
+  /* primitives interactive */
+  .prim-wrap{display:grid;grid-template-columns:230px 1fr;gap:16px;flex:1;min-height:0;}
+  .op-list{display:flex;flex-direction:column;gap:7px;overflow:auto;}
+  .op-list .grp-title{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin:6px 0 2px;letter-spacing:1px;}
+  .opbtn{font-family:var(--mono);font-size:.9rem;cursor:pointer;border:1px solid var(--line);color:var(--ink);
+    background:var(--panel);padding:8px 11px;border-radius:9px;user-select:none;transition:.15s;display:flex;justify-content:space-between;align-items:center;}
+  .opbtn:hover{border-color:var(--accent);background:var(--panel2);}
+  .opbtn.active{border-color:var(--accent2);background:rgba(56,225,196,.12);color:var(--accent2);}
+  .opbtn .dot{width:9px;height:9px;border-radius:50%;background:var(--muted);}
+  .stage{display:flex;flex-direction:column;min-height:0;}
+  .stage .anim{flex:1;min-height:0;background:radial-gradient(600px 300px at 50% 0%,#141d38,#0c1224);border:1px solid var(--line);border-radius:13px;position:relative;}
+  .stage .anim svg{width:100%;height:100%;display:block;}
+  .op-info{margin-top:10px;display:grid;grid-template-columns:1.4fr 1fr;gap:12px;}
+  .op-info .box{border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:var(--panel);font-size:.9rem;color:var(--muted);line-height:1.5;}
+  .op-info .box b{color:var(--ink);}
+  .op-info .box .lbl{font-family:var(--mono);font-size:.72rem;color:var(--accent2);letter-spacing:1px;display:block;margin-bottom:3px;}
+  .phasebar{display:flex;gap:8px;margin-top:8px;}
+  .pbtn{flex:1;text-align:center;font-family:var(--mono);font-size:.85rem;cursor:pointer;border:1px solid var(--line);
+    color:var(--muted);background:var(--panel);padding:8px 6px;border-radius:9px;user-select:none;transition:.15s;}
+  .pbtn:hover{border-color:var(--accent);color:var(--ink);}
+  .pbtn.active{border-color:var(--accent2);background:rgba(56,225,196,.14);color:var(--accent2);font-weight:700;}
+  .ctrlbar{display:flex;gap:8px;align-items:center;margin-top:8px;}
+  .btn{font-family:var(--mono);font-size:.82rem;cursor:pointer;border:1px solid var(--accent);color:var(--accent);
+    background:rgba(91,140,255,.1);padding:6px 13px;border-radius:8px;user-select:none;}
+  .btn:hover{background:rgba(91,140,255,.22);}
+  .status{align-self:center;color:var(--muted);font-family:var(--mono);font-size:.82rem;}
+
+  pre{background:#0a0f1f;border:1px solid var(--line);border-radius:11px;padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:.88rem;line-height:1.5;color:#cdd7ee;}
+  pre .c{color:#6b7ba3;} pre .kw{color:var(--purple);} pre .st{color:var(--accent2);} pre .nm{color:var(--warn);}
+  .diagram{width:100%;height:100%;display:block;}
+  .gpu-box{fill:var(--panel2);stroke:var(--accent);stroke-width:2;}
+  .kpi{font-family:var(--mono);font-size:2.1rem;font-weight:800;color:var(--accent2);}
+  .small{font-size:.83rem;color:var(--muted);}
+  .pipe-cell{stroke:#0b1020;stroke-width:1.5;} .flabel{font-family:var(--mono);font-size:11px;fill:#0b1020;font-weight:700;}
+  .badge{display:inline-block;font-family:var(--mono);font-size:.75rem;padding:2px 8px;border-radius:6px;margin-right:6px;}
+  .badge.p{background:rgba(56,225,196,.15);color:var(--accent2);border:1px solid var(--accent2);}
+</style>
+</head>
+<body>
+<div id="viewport">
+<div class="deck" id="deck">
+
+<!-- 1 COVER -->
+<section class="slide cover active">
+  <div class="kicker">Distributed Training · 分布式训练系统入门</div>
+  <h1>从通信原语<br/>到并行策略</h1>
+  <div class="sub">一张卡放不下的模型，是怎么在上千张卡上训起来的？—— 以 <b>Megatron-LM</b> 为例</div>
+  <div class="meta">
+    <span class="tag">① 通信原语（点击看动画）</span>
+    <span class="tag">② 训练 Workflow</span>
+    <span class="tag">③ 各路并行</span>
+    <span class="tag">④ 显存优化</span>
+  </div>
+  <div style="margin-top:30px;color:var(--muted);font-family:var(--mono);font-size:.88rem">≈ 20 min · → / 空格 翻页 · F 全屏</div>
+</section>
+
+<!-- 2 AGENDA -->
+<section class="slide">
+  <h2><span class="num">00</span>路线图：由浅入深</h2>
+  <p class="lead" style="margin-bottom:12px">先掌握最底层的"积木"——通信原语；再看一次训练迭代长什么样；然后理解各种并行怎么用这些积木把模型切开；最后讨论几个进阶扩展问题。</p>
+  <div class="agenda fill">
+    <div class="grp">
+      <h4>PART 1 · 基础积木</h4>
+      <div class="item"><span class="idx">01</span><span class="t">通信原语：数据在卡之间怎么流动（可点击交互）</span></div>
+      <h4 style="margin-top:12px">PART 2 · 训练流程 & 显存基础</h4>
+      <div class="item"><span class="idx">02</span><span class="t">单卡一次迭代：前向 / 反向 / 优化器</span></div>
+      <div class="item"><span class="idx">03</span><span class="t">从一个 Linear 看 激活 / 权重 / 输入</span></div>
+      <div class="item"><span class="idx">04</span><span class="t">重计算：用算力换显存</span></div>
+      <h4 style="margin-top:12px">PART 4 · 进阶讨论</h4>
+      <div class="item"><span class="idx">14-16</span><span class="t">Muon · 长序列 · FSDP vs TP+PP</span></div>
+    </div>
+    <div class="grp">
+      <h4>PART 3 · 并行策略</h4>
+      <div class="item"><span class="idx">05·06</span><span class="t">总览 + 动画演示（点名字 / 阶段切换）</span></div>
+      <div class="item"><span class="idx">07·08</span><span class="t">数据并行 DP + ZeRO / FSDP</span></div>
+      <div class="item"><span class="idx">09·10</span><span class="t">张量并行 TP + 序列并行 SP</span></div>
+      <div class="item"><span class="idx">11</span><span class="t">流水线并行 PP（1F1B）</span></div>
+      <div class="item"><span class="idx">12·13</span><span class="t">上下文并行 CP · 专家并行 EP</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 DIVIDER P1 -->
+<section class="slide divider">
+  <div class="part">PART 1</div>
+  <h1>通信原语</h1>
+  <div class="desc">所有并行策略，最终都由这几个"集合通信"操作拼出来。先看清每个操作到底把数据搬去了哪。<br/><span class="small">下一页：点任意一个算子，看它的传输过程。</span></div>
+</section>
+
+<!-- 4 PRIMITIVES INTERACTIVE -->
+<section class="slide" id="prim-slide">
+  <h2><span class="num">01</span>通信原语 · 点一下看它怎么搬数据</h2>
+  <div class="prim-wrap no-nav">
+    <div class="op-list">
+      <div class="grp-title">一对多 / 多对一</div>
+      <div class="opbtn" data-op="broadcast"><span>Broadcast</span><span class="dot"></span></div>
+      <div class="opbtn" data-op="scatter"><span>Scatter</span><span class="dot"></span></div>
+      <div class="opbtn" data-op="gather"><span>Gather</span><span class="dot"></span></div>
+      <div class="opbtn" data-op="reduce"><span>Reduce</span><span class="dot"></span></div>
+      <div class="grp-title">多对多（训练主力）</div>
+      <div class="opbtn" data-op="allgather"><span>All-Gather</span><span class="dot"></span></div>
+      <div class="opbtn" data-op="reducescatter"><span>Reduce-Scatter</span><span class="dot"></span></div>
+      <div class="opbtn" data-op="allreduce"><span>All-Reduce</span><span class="dot"></span></div>
+      <div class="opbtn" data-op="alltoall"><span>All-to-All</span><span class="dot"></span></div>
+      <div class="grp-title">点对点</div>
+      <div class="opbtn" data-op="p2p"><span>Send / Recv</span><span class="dot"></span></div>
+      <div class="opbtn" data-op="ring"><span>Ring Send/Recv</span><span class="dot"></span></div>
+    </div>
+    <div class="stage">
+      <div class="anim"><svg id="prim-svg" viewBox="0 0 900 340" preserveAspectRatio="xMidYMid meet"></svg></div>
+      <div class="ctrlbar">
+        <div class="btn" id="prim-replay">▶ 重播</div>
+        <div class="status" id="prim-status">← 选择一个算子</div>
+      </div>
+      <div class="op-info">
+        <div class="box"><span class="lbl">语义 / 在干嘛</span><span id="prim-desc">每个色块代表一份数据，颜色表示它最初属于哪张卡。绿色 = 已被规约(求和)的结果。</span></div>
+        <div class="box"><span class="lbl">通信量 & 用途</span><span id="prim-use">选择左侧算子查看。</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 DIVIDER P2 -->
+<section class="slide divider">
+  <div class="part">PART 2</div>
+  <h1>训练 Workflow</h1>
+  <div class="desc">在把模型切开之前，先看清"没切"时，一次训练迭代到底做了哪几步。</div>
+</section>
+
+<!-- 7 SINGLE-GPU WORKFLOW -->
+<section class="slide">
+  <h2><span class="num">02</span>单卡：一次训练迭代的 5 步</h2>
+  <div class="grid cols-2 fill">
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3>数据流</h3>
+      <svg viewBox="0 0 460 250" class="diagram" style="flex:1">
+        <g font-size="12" fill="var(--muted)">
+        <rect x="20" y="20" width="420" height="34" rx="8" fill="rgba(91,140,255,.14)" stroke="var(--accent)"/>
+        <text x="230" y="42" text-anchor="middle" fill="var(--accent)">① 取一个 batch 数据</text>
+        <rect x="20" y="66" width="420" height="34" rx="8" fill="rgba(56,225,196,.14)" stroke="var(--accent2)"/>
+        <text x="230" y="88" text-anchor="middle" fill="var(--accent2)">② 前向 Forward：算 loss，缓存中间激活</text>
+        <rect x="20" y="112" width="420" height="34" rx="8" fill="rgba(255,127,208,.14)" stroke="var(--pink)"/>
+        <text x="230" y="134" text-anchor="middle" fill="var(--pink)">③ 反向 Backward：用激活算出每个参数的梯度</text>
+        <rect x="20" y="158" width="420" height="34" rx="8" fill="rgba(255,180,84,.14)" stroke="var(--warn)"/>
+        <text x="230" y="180" text-anchor="middle" fill="var(--warn)">④ 优化器 Step：Adam 更新参数</text>
+        <rect x="20" y="204" width="420" height="34" rx="8" fill="rgba(70,209,127,.14)" stroke="var(--green)"/>
+        <text x="230" y="226" text-anchor="middle" fill="var(--green)">⑤ 梯度清零 → 回到 ①</text>
+        </g>
+      </svg>
+    </div>
+    <div class="card">
+      <h3>显存里都放了啥（Adam, 混合精度）</h3>
+      <table class="mtx" style="margin-bottom:10px">
+        <tr><th>内容</th><th>大小</th><th>说明</th></tr>
+        <tr><td>参数 fp16</td><td>2P</td><td>模型本体（<b>P = 参数量</b>）</td></tr>
+        <tr><td>梯度 fp16</td><td>2P</td><td>反向产出</td></tr>
+        <tr><td>优化器状态</td><td>12P</td><td>fp32参数+m+v</td></tr>
+        <tr><td><b>激活值</b></td><td class="hl">∝ b·s·h·层数</td><td>前向缓存，反向要用</td></tr>
+      </table>
+      <div class="note warn"><b>两个大头：</b>模型状态固定 16P（7B≈112GB）；激活随 batch·序列长度增长，长序列时甚至超过模型本身。<br/>→ 单卡装不下，于是需要<b>并行</b>（切模型状态）和<b>重计算</b>（省激活）。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ACTIVATION CONCEPT -->
+<section class="slide">
+  <h2><span class="num">03</span>反向要存什么？—— 从一个 Linear 看清 激活 / 权重 / 输入</h2>
+  <div class="grid cols-2 fill">
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3>Linear 的前向 & 反向</h3>
+      <svg viewBox="0 0 460 250" class="diagram" style="flex:1">
+        <defs>
+          <marker id="actFwd" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--accent2)"/></marker>
+          <marker id="actBwd" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--pink)"/></marker>
+        </defs>
+        <g font-size="11.5">
+          <text x="16" y="24" fill="var(--accent2)" font-size="12">① 前向 Forward</text>
+          <rect x="18" y="40" width="66" height="40" rx="8" fill="rgba(255,180,84,.14)" stroke="var(--warn)"/>
+          <text x="51" y="58" text-anchor="middle" fill="var(--warn)">X 输入</text>
+          <text x="51" y="73" text-anchor="middle" fill="var(--muted)" font-size="9.5">上一层激活</text>
+          <rect x="150" y="8" width="150" height="26" rx="7" fill="rgba(91,140,255,.14)" stroke="var(--accent)"/>
+          <text x="225" y="25" text-anchor="middle" fill="var(--accent)">W 权重（常驻）</text>
+          <line x1="225" y1="34" x2="225" y2="40" stroke="var(--accent)"/>
+          <rect x="150" y="40" width="150" height="40" rx="8" fill="#111a33" stroke="var(--ink)"/>
+          <text x="225" y="64" text-anchor="middle" fill="var(--ink)">Linear&nbsp;&nbsp;Y = X·W</text>
+          <rect x="366" y="40" width="76" height="40" rx="8" fill="rgba(56,225,196,.14)" stroke="var(--accent2)"/>
+          <text x="404" y="64" text-anchor="middle" fill="var(--accent2)">Y 输出</text>
+          <line x1="84" y1="60" x2="147" y2="60" stroke="var(--accent2)" stroke-width="2" marker-end="url(#actFwd)"/>
+          <line x1="300" y1="60" x2="363" y2="60" stroke="var(--accent2)" stroke-width="2" marker-end="url(#actFwd)"/>
+          <text x="230" y="102" text-anchor="middle" fill="var(--muted)" font-size="10.5">前向结束：把输入 X 存进 ctx（反向要用）</text>
+          <line x1="18" y1="118" x2="442" y2="118" stroke="var(--line)" stroke-dasharray="4 4"/>
+          <text x="16" y="140" fill="var(--pink)" font-size="12">② 反向 Backward</text>
+          <rect x="18" y="152" width="66" height="46" rx="8" fill="rgba(255,127,208,.12)" stroke="var(--pink)"/>
+          <text x="51" y="180" text-anchor="middle" fill="var(--pink)">dX</text>
+          <rect x="150" y="150" width="150" height="52" rx="8" fill="#111a33" stroke="var(--pink)"/>
+          <text x="225" y="170" text-anchor="middle" fill="var(--ink)" font-size="11">dX = dY · Wᵀ</text>
+          <text x="225" y="191" text-anchor="middle" fill="var(--warn)" font-size="11">dW = Xᵀ · dY　← 需要 X</text>
+          <rect x="366" y="152" width="76" height="46" rx="8" fill="rgba(255,127,208,.12)" stroke="var(--pink)"/>
+          <text x="404" y="180" text-anchor="middle" fill="var(--pink)">dY</text>
+          <line x1="366" y1="176" x2="303" y2="176" stroke="var(--pink)" stroke-width="2" marker-end="url(#actBwd)"/>
+          <line x1="150" y1="176" x2="87" y2="176" stroke="var(--pink)" stroke-width="2" marker-end="url(#actBwd)"/>
+          <path d="M84,66 C120,66 120,176 147,176" fill="none" stroke="var(--warn)" stroke-width="1.6" stroke-dasharray="5 4"/>
+          <text x="108" y="112" fill="var(--warn)" font-size="10">复用存的 X</text>
+        </g>
+      </svg>
+    </div>
+    <div class="card">
+      <h3>"激活" 到底是什么</h3>
+      <p>Autograd 前向时，会把<b>反向计算梯度要用到的张量</b>存进 ctx（<code>save_for_backward</code>）。这些被缓存的中间张量，就是<b>激活 (activation)</b>。</p>
+      <ul style="margin-top:6px">
+        <li><b>Linear</b>：存输入 X（算 <span class="hl">dW=Xᵀ·dY</span> 要用）。</li>
+        <li><b>GeLU/SiLU</b> 存输入；<b>Softmax/LayerNorm</b> 存输出或统计量；<b>Dropout</b> 存 mask。</li>
+        <li><b>权重 W、梯度 dW</b> 大小固定（∝ 参数量）；<b>激活</b> ∝ b·s·h·层数，是长序列 / 大 batch 下的第一大头。</li>
+      </ul>
+      <div class="note warn" style="margin-top:10px"><b>💡 这也是 PP "前重后轻" 的原因：</b>1F1B 里越靠前的 stage，同时"已前向、还没反向"的 microbatch 越多（in-flight 更多），这些 microbatch 的激活都得留着不能释放 → <b>前面的 stage 峰值激活显存最高</b>。</div>
+    </div>
+  </div>
+</section>
+
+<!-- 8++ RECOMPUTE -->
+<section class="slide">
+  <h2><span class="num">04</span>重计算：用一次前向的算力，换回激活显存</h2>
+  <div class="grid cols-2 fill">
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3>以 TransformerBlock 为单位：只存边界，内部重算</h3>
+      <svg viewBox="0 0 460 250" class="diagram" style="flex:1">
+        <defs>
+          <marker id="reFwd" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--muted)"/></marker>
+        </defs>
+        <g font-size="11">
+          <text x="14" y="22" fill="var(--accent2)" font-size="12">① 前向：只在 Block 边界保存激活</text>
+          <!-- boundary h0 -->
+          <rect x="12" y="46" width="34" height="42" rx="7" fill="rgba(255,180,84,.16)" stroke="var(--warn)"/>
+          <text x="29" y="71" text-anchor="middle" fill="var(--warn)">h₀</text>
+          <!-- Block0 -->
+          <rect x="54" y="40" width="120" height="54" rx="9" fill="#0e1730" stroke="var(--line)"/>
+          <rect x="60" y="46" width="108" height="20" rx="4" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+          <text x="114" y="60" text-anchor="middle" fill="var(--muted)" font-size="9.5">Self-Attn（丢弃）</text>
+          <rect x="60" y="68" width="108" height="20" rx="4" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+          <text x="114" y="82" text-anchor="middle" fill="var(--muted)" font-size="9.5">MLP（丢弃）</text>
+          <!-- boundary h1 -->
+          <rect x="182" y="46" width="34" height="42" rx="7" fill="rgba(255,180,84,.16)" stroke="var(--warn)"/>
+          <text x="199" y="71" text-anchor="middle" fill="var(--warn)">h₁</text>
+          <!-- Block1 -->
+          <rect x="224" y="40" width="120" height="54" rx="9" fill="#0e1730" stroke="var(--line)"/>
+          <rect x="230" y="46" width="108" height="20" rx="4" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+          <text x="284" y="60" text-anchor="middle" fill="var(--muted)" font-size="9.5">Self-Attn（丢弃）</text>
+          <rect x="230" y="68" width="108" height="20" rx="4" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+          <text x="284" y="82" text-anchor="middle" fill="var(--muted)" font-size="9.5">MLP（丢弃）</text>
+          <!-- boundary h2 -->
+          <rect x="352" y="46" width="34" height="42" rx="7" fill="rgba(255,180,84,.16)" stroke="var(--warn)"/>
+          <text x="369" y="71" text-anchor="middle" fill="var(--warn)">h₂</text>
+          <text x="400" y="71" fill="var(--muted)" font-size="16">⋯</text>
+          <text x="230" y="112" text-anchor="middle" fill="var(--muted)" font-size="10">只保存 h₀,h₁,h₂…（block 输入/输出）；内部激活全部丢弃</text>
+          <line x1="14" y1="126" x2="446" y2="126" stroke="var(--line)" stroke-dasharray="4 4"/>
+          <text x="14" y="148" fill="var(--pink)" font-size="12">② 反向到 Block1：拿 h₁ 重新前向一遍</text>
+          <rect x="182" y="160" width="34" height="42" rx="7" fill="rgba(255,180,84,.16)" stroke="var(--warn)"/>
+          <text x="199" y="185" text-anchor="middle" fill="var(--warn)">h₁</text>
+          <rect x="224" y="158" width="150" height="52" rx="9" fill="#111a33" stroke="var(--pink)"/>
+          <text x="299" y="176" text-anchor="middle" fill="var(--ink)" font-size="10.5">① 重新前向 → 重建内部激活</text>
+          <text x="299" y="196" text-anchor="middle" fill="var(--pink)" font-size="10.5">② 再算该 block 的梯度</text>
+          <line x1="216" y1="181" x2="221" y2="181" stroke="var(--pink)" stroke-width="2"/>
+          <path d="M224,214 C260,232 338,232 374,214" fill="none" stroke="var(--muted)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#reFwd)"/>
+          <text x="299" y="238" text-anchor="middle" fill="var(--muted)" font-size="9.5">额外一次前向（用计算换显存）</text>
+        </g>
+      </svg>
+    </div>
+    <div class="card">
+      <h3>重计算 (Activation Recomputation)</h3>
+      <p>前向以 <b>TransformerBlock</b> 为单位，只保存每个 block 的<b>输入</b>（= 上一个 block 的输出），block 内部的 attention 分数、softmax、MLP 隐藏等中间激活<b>全部不缓存</b>。反向到该 block 时，用存下的输入<b>重新前向一遍</b>重建这些激活，再算梯度。</p>
+      <ul style="margin-top:6px">
+        <li><b>省</b>：每个 block 从"存所有中间张量"降到"只存一个边界输入"。</li>
+        <li><b>代价</b>：多一次前向 ≈ <span class="hl">+30% 算力</span>（前向约占 1/3）。</li>
+        <li><b>Selective</b>：只重算又便宜又占地方的部分（如 softmax/dropout），性价比最高。</li>
+      </ul>
+      <div class="note good" style="margin-top:8px"><b>其实 FlashAttention 内部就是同一招：</b>前向<b>不保存</b>完整的 S=QKᵀ/softmax 注意力矩阵（O(s²)），只留 Q/K/V 与每行 logsumexp；反向时按分块<b>重新计算 softmax 矩阵</b>，把 attention 激活从 O(s²) 降到 O(s)。</div>
+      <div class="note" style="margin-top:8px">Megatron：<code>--recompute-activations</code>（selective）；<code>--recompute-granularity full --recompute-method uniform|block</code>（全量）。</div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 DIVIDER P3 -->
+<section class="slide divider">
+  <div class="part">PART 3</div>
+  <h1>并行策略</h1>
+  <div class="desc">切数据、切权重、切网络层、切序列、切专家 —— 每一刀都对应一种通信。</div>
+</section>
+
+<!-- 10 OVERVIEW -->
+<section class="slide">
+  <h2><span class="num">05</span>并行维度总览：切什么 → 用哪个原语</h2>
+  <div class="grid cols-5" style="margin-bottom:12px">
+    <div class="card" style="text-align:center"><div style="font-size:1.6rem;font-weight:800;color:var(--accent)">DP</div><div class="small">切 batch</div></div>
+    <div class="card" style="text-align:center"><div style="font-size:1.6rem;font-weight:800;color:var(--accent2)">TP</div><div class="small">切权重矩阵</div></div>
+    <div class="card" style="text-align:center"><div style="font-size:1.6rem;font-weight:800;color:var(--warn)">PP</div><div class="small">切网络层</div></div>
+    <div class="card" style="text-align:center"><div style="font-size:1.6rem;font-weight:800;color:var(--purple)">SP/CP</div><div class="small">切序列</div></div>
+    <div class="card" style="text-align:center"><div style="font-size:1.6rem;font-weight:800;color:var(--pink)">EP</div><div class="small">切专家</div></div>
+  </div>
+  <div class="grid cols-2 fill">
+    <div class="card">
+      <h3>放置直觉（关键！）</h3>
+      <ul>
+        <li><b>通信越重 → 放越快的链路。</b></li>
+        <li><b>TP/EP</b>：每层多次大通信 → 只在<span class="hl">单机内 NVLink</span>（900GB/s）。</li>
+        <li><b>PP</b>：只传一份边界激活，通信最轻 → 跨机 IB。</li>
+        <li><b>DP</b>：每 step 一次、可与反向重叠 → 放最外层扩节点。</li>
+        <li>总卡数 = <span class="k">DP × TP × PP × CP × EP</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>一句话记住每种并行</h3>
+      <table class="mtx">
+        <tr><th>并行</th><th>核心原语</th><th>一句话</th></tr>
+        <tr><td>DP</td><td>All-Reduce</td><td>复制模型，切数据</td></tr>
+        <tr><td>TP</td><td>All-Reduce</td><td>切开层内大矩阵</td></tr>
+        <tr><td>SP</td><td>AG+RS</td><td>顺手切 LN/Dropout 激活</td></tr>
+        <tr><td>PP</td><td>Send/Recv</td><td>网络接力，防气泡</td></tr>
+        <tr><td>CP</td><td>Ring P2P</td><td>为超长序列切 attention</td></tr>
+        <tr><td>EP</td><td>All-to-All</td><td>token 找专家</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- 10+ PARALLELISM PLAYGROUND -->
+<section class="slide" id="para-slide">
+  <h2><span class="num">06</span>并行策略动画 · 点名字 / 阶段切换</h2>
+  <div class="prim-wrap no-nav">
+    <div class="op-list">
+      <div class="grp-title">切数据 / 切显存</div>
+      <div class="opbtn" data-strat="dp"><span>数据并行 DP</span><span class="dot"></span></div>
+      <div class="opbtn" data-strat="z1"><span>ZeRO-1 优化器状态</span><span class="dot"></span></div>
+      <div class="opbtn" data-strat="z2"><span>ZeRO-2 +梯度</span><span class="dot"></span></div>
+      <div class="opbtn" data-strat="z3"><span>ZeRO-3 +参数</span><span class="dot"></span></div>
+      <div class="grp-title">切模型</div>
+      <div class="opbtn" data-strat="tp"><span>张量并行 TP</span><span class="dot"></span></div>
+      <div class="opbtn" data-strat="pp"><span>流水线并行 PP</span><span class="dot"></span></div>
+      <div class="opbtn" data-strat="sp"><span>序列并行 SP</span><span class="dot"></span></div>
+      <div class="grp-title">切序列 / 专家</div>
+      <div class="opbtn" data-strat="cp"><span>上下文并行 CP</span><span class="dot"></span></div>
+      <div class="opbtn" data-strat="ep"><span>专家并行 EP</span><span class="dot"></span></div>
+    </div>
+    <div class="stage">
+      <div class="anim"><svg id="para-svg" viewBox="0 0 960 384" preserveAspectRatio="xMidYMid meet"></svg></div>
+      <div class="phasebar" id="para-phases"></div>
+      <div class="ctrlbar"><div class="btn" id="para-replay">▶ 重播</div><div class="status" id="para-status">← 选择并行策略</div></div>
+      <div class="op-info">
+        <div class="box"><span class="lbl">怎么切 / 在干嘛</span><span id="para-desc">每张卡持有什么 + 通信怎么发生。</span></div>
+        <div class="box"><span class="lbl">通信 · 特点</span><span id="para-note">选择左侧策略查看。</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 11 DP -->
+<section class="slide">
+  <h2><span class="num">07</span>数据并行 DP：复制模型，切数据</h2>
+  <div class="grid cols-2 fill">
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3>原理</h3>
+      <p>每卡一份<b>完整模型</b>，各吃不同 mini-batch 独立前反向；反向后对<b>梯度做 All-Reduce 求平均</b>，保证参数同步 → 等效一个大 batch。</p>
+      <svg viewBox="0 0 460 150" class="diagram" style="flex:1;margin-top:6px">
+        <g font-size="11" fill="var(--muted)">
+        <rect x="20" y="20" width="90" height="46" rx="8" class="gpu-box"/><text x="65" y="40" text-anchor="middle" fill="var(--ink)">GPU0 全模型</text><text x="65" y="57" text-anchor="middle" fill="var(--accent2)">batch0</text>
+        <rect x="130" y="20" width="90" height="46" rx="8" class="gpu-box"/><text x="175" y="40" text-anchor="middle" fill="var(--ink)">GPU1 全模型</text><text x="175" y="57" text-anchor="middle" fill="var(--accent2)">batch1</text>
+        <rect x="240" y="20" width="90" height="46" rx="8" class="gpu-box"/><text x="285" y="40" text-anchor="middle" fill="var(--ink)">GPU2 全模型</text><text x="285" y="57" text-anchor="middle" fill="var(--accent2)">batch2</text>
+        <rect x="350" y="20" width="90" height="46" rx="8" class="gpu-box"/><text x="395" y="40" text-anchor="middle" fill="var(--ink)">GPU3 全模型</text><text x="395" y="57" text-anchor="middle" fill="var(--accent2)">batch3</text>
+        <rect x="20" y="95" width="420" height="30" rx="8" fill="rgba(70,209,127,.15)" stroke="var(--green)"/>
+        <text x="230" y="115" text-anchor="middle" fill="var(--green)">梯度 All-Reduce → 所有卡拿到相同的平均梯度</text>
+        </g>
+      </svg>
+    </div>
+    <div class="four" style="align-content:start">
+      <div class="f comm"><div class="h">通信</div><p>每 step <b>1 次梯度 All-Reduce</b>，量≈2P，Ring 下与卡数无关。</p></div>
+      <div class="f comp"><div class="h">计算</div><p>各卡独立跑完整前反向，<b>无额外计算</b>。</p></div>
+      <div class="f over"><div class="h">Overlap</div><p>反向按 bucket 分桶，<b>边算梯度边 All-Reduce</b>，通信几乎完全隐藏。</p></div>
+      <div class="f aff"><div class="h">受什么影响</div><p>受<b>参数量P、网络带宽、bucket 大小</b>影响；卡极多时同步/掉队(straggler)开销上升。</p></div>
+      <div class="f" style="grid-column:1/3;border-color:var(--warn)"><div class="h" style="color:var(--warn)">致命局限</div><p>每卡都要存完整 16P 模型状态 → 大模型放不下。这正是 <b>ZeRO</b> 要解决的（下页）。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 12 ZeRO -->
+<section class="slide">
+  <h2><span class="num">08</span>ZeRO / 分布式优化器：把 16P 摊开</h2>
+  <p class="lead" style="margin-bottom:9px">DP 里每卡的优化器状态完全<b>冗余</b>。ZeRO 沿 DP 组把它们切成 N 份，用时再临时聚合 —— 用通信换显存。</p>
+  <div class="grid cols-3" style="margin-bottom:9px">
+    <div class="card"><h3><span style="color:var(--accent)">Stage 1</span> 切优化器状态</h3><p class="small">显存 16P → 4P+12P/N。梯度 <b>Reduce-Scatter</b>，step 后参数 <b>All-Gather</b>。</p></div>
+    <div class="card"><h3><span style="color:var(--accent2)">Stage 2</span> +切梯度</h3><p class="small">→ 2P+14P/N。通信量与 Stage1 基本持平。</p></div>
+    <div class="card"><h3><span style="color:var(--purple)">Stage 3 / FSDP</span> +切参数</h3><p class="small">→ 16P/N（近线性省显存）。参数<b>铺平</b>成一维 flat buffer 再按卡分片；用到某层临时 All-Gather 拼出完整权重，用完即弃。</p></div>
+  </div>
+  <div class="four">
+    <div class="f comm"><div class="h">通信</div><p>Z1/2：All-Reduce 拆成 <b>RS+AG</b>，<span class="hl">总量不变</span>。Z3：参数按需 All-Gather，通信量增 ~1.5×。</p></div>
+    <div class="f comp"><div class="h">计算</div><p>无额外计算（只是数据搬运时机变了）。</p></div>
+    <div class="f over"><div class="h">Overlap</div><p>Z3 的参数 All-Gather 可<b>预取</b>并与前向计算重叠；梯度 RS 与反向重叠。</p></div>
+    <div class="f aff"><div class="h">受什么影响</div><p>省显存正比于 <b>DP 度 N</b>；Z3 通信更敏感于<b>带宽</b>，跨机时收益打折。</p></div>
+  </div>
+  <div class="note good" style="margin-top:10px"><b>Megatron：</b><code>--use-distributed-optimizer</code> ≈ ZeRO-1，与 TP/PP 正交组合，是几乎必开的选项。</div>
+  <div class="note" style="margin-top:8px"><b>FSDP（ZeRO-3 的实现关键）：</b>把一层/一组参数<b>铺平 (flatten)</b> 成一维 flat buffer 再沿 DP 切片 —— 通信以桶为单位、更高效；配合<b>预取 overlap</b>：算当前层时提前 <b>All-Gather 下一层</b>的完整参数、把参数聚合藏进计算，梯度则边算边 <b>Reduce-Scatter</b>。</div>
+</section>
+
+<!-- 13 TP -->
+<section class="slide">
+  <h2><span class="num">09</span>张量并行 TP：切开层内的大矩阵</h2>
+  <div class="grid cols-2 fill">
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3>怎么切（MLP 为例）</h3>
+      <p>第一个权重 <b>按列切</b>→ 每卡独立算非线性(GeLU)无需通信；第二个权重 <b>按行切</b>→ 结果是"部分和"，一次 <b>All-Reduce</b> 收尾。Attention 则天然<b>按注意力头</b>切。</p>
+      <svg viewBox="0 0 460 150" class="diagram" style="flex:1">
+        <g font-size="11" fill="var(--muted)">
+        <rect x="20" y="45" width="40" height="50" rx="6" fill="var(--panel2)" stroke="var(--line)"/><text x="40" y="74" text-anchor="middle">X</text>
+        <rect x="90" y="40" width="46" height="26" rx="5" fill="rgba(91,140,255,.25)" stroke="var(--accent)"/><text x="113" y="58" text-anchor="middle" fill="var(--ink)">A₁·GeLU</text>
+        <rect x="90" y="74" width="46" height="26" rx="5" fill="rgba(91,140,255,.25)" stroke="var(--accent)"/><text x="113" y="92" text-anchor="middle" fill="var(--ink)">A₂·GeLU</text>
+        <text x="113" y="120" text-anchor="middle" class="small">列切·无通信</text>
+        <rect x="170" y="40" width="46" height="26" rx="5" fill="rgba(56,225,196,.25)" stroke="var(--accent2)"/><text x="193" y="58" text-anchor="middle" fill="var(--ink)">·B₁</text>
+        <rect x="170" y="74" width="46" height="26" rx="5" fill="rgba(56,225,196,.25)" stroke="var(--accent2)"/><text x="193" y="92" text-anchor="middle" fill="var(--ink)">·B₂</text>
+        <text x="193" y="120" text-anchor="middle" class="small">行切·出部分和</text>
+        <rect x="260" y="45" width="100" height="50" rx="8" fill="rgba(70,209,127,.15)" stroke="var(--green)"/><text x="310" y="66" text-anchor="middle" fill="var(--green)">All-Reduce</text><text x="310" y="83" text-anchor="middle" fill="var(--green)">Σ部分和</text>
+        <rect x="395" y="45" width="45" height="50" rx="6" fill="var(--panel2)" stroke="var(--line)"/><text x="417" y="74" text-anchor="middle" fill="var(--ink)">Y</text>
+        <line x1="360" y1="70" x2="395" y2="70" stroke="var(--muted)" stroke-width="2"/>
+        </g>
+      </svg>
+    </div>
+    <div class="four" style="align-content:start">
+      <div class="f comm"><div class="h">通信</div><p><b>每层 4 次 All-Reduce</b>(attn 2 + mlp 2)，量 ∝ batch·seq·hidden。这是最重的并行。</p></div>
+      <div class="f comp"><div class="h">计算</div><p>大矩阵乘法计算量 <b>/ TP</b>，均匀分摊；权重与激活的 hidden 维都降到 1/TP。</p></div>
+      <div class="f over"><div class="h">Overlap</div><p><span class="hl">难重叠</span>：All-Reduce 卡在前向关键路径上，串行依赖。需 SP + Async/序列级切分才能部分重叠。</p></div>
+      <div class="f aff"><div class="h">受什么影响</div><p>受<b>链路带宽（必须 NVLink）</b>、hidden、batch·seq 影响；TP 度需<b>整除 head 数</b>，且一般 ≤8（不跨机）。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 14 SP -->
+<section class="slide">
+  <h2><span class="num">10</span>序列并行 SP：TP 的黄金搭档</h2>
+  <div class="grid cols-2 fill">
+    <div class="card">
+      <h3>解决什么</h3>
+      <p>TP 切不到 <b>LayerNorm / Dropout / 残差</b>——它们的激活在每张 TP 卡上是<b>完整复制</b>的，白占显存。SP 把这些操作沿<b>序列维度</b>切开。</p>
+      <div class="note" style="margin-top:10px">进入 TP 区前 <b>All-Gather</b> 补全序列，出 TP 区后 <b>Reduce-Scatter</b> 切回。因为 <code>All-Reduce = AG + RS</code>，所以 <b>通信总量和纯 TP 一样</b>，却额外省下 LN/Dropout 激活。</div>
+    </div>
+    <div class="four" style="align-content:start">
+      <div class="f comm"><div class="h">通信</div><p>把 TP 的 All-Reduce 换成 <b>All-Gather + Reduce-Scatter</b>，<span class="hl">总量不变</span>。</p></div>
+      <div class="f comp"><div class="h">计算</div><p>无额外计算。</p></div>
+      <div class="f over"><div class="h">Overlap</div><p>与 TP 同源，可结合 Async 把 AG/RS 与矩阵乘部分重叠。</p></div>
+      <div class="f aff"><div class="h">受什么影响</div><p>省的激活 ∝ <b>TP 度</b>；必须与 TP 绑定使用。<br/>Megatron: <code>--sequence-parallel</code></p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 15 PP -->
+<section class="slide">
+  <h2><span class="num">11</span>流水线并行 PP：网络接力，与"气泡"作战</h2>
+  <div class="grid cols-2 fill">
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3>GPipe vs 1F1B（时序图）</h3>
+      <svg viewBox="0 0 500 130" class="diagram" id="gpipe-svg" style="height:130px"></svg>
+      <svg viewBox="0 0 500 130" class="diagram" id="onefone-svg" style="height:130px"></svg>
+      <p class="small">空白=该卡在等待。气泡率 = (p−1)/m（p=stage数, m=microbatch数）。1F1B 气泡不变但<b>更早释放激活</b>，峰值激活显存从 O(m) 降到 O(p)。Interleaved 进一步把气泡降到 (p−1)/(m·v)。</p>
+    </div>
+    <div class="four" style="align-content:start">
+      <div class="f comm"><div class="h">通信</div><p>每 microbatch 在 stage 边界 <b>Send/Recv 一份激活</b>，量最小(∝ batch·seq·hidden 的一份) → 最<b>适合跨机</b>。</p></div>
+      <div class="f comp"><div class="h">计算</div><p>各 stage 只算自己那几层；参数显存降到 1/PP。</p></div>
+      <div class="f over"><div class="h">Overlap</div><p>P2P 可与计算重叠；但存在<b>气泡</b>空转。Zero-Bubble/DualPipe 把反向拆两步填气泡，逼近 0。</p></div>
+      <div class="f aff"><div class="h">受什么影响</div><p>气泡 ∝ (p−1)/m → 受 <b>stage 数 p、microbatch 数 m、层是否均衡</b>影响。m 越大越划算。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- CP -->
+<section class="slide">
+  <h2><span class="num">12</span>上下文并行 CP：为超长序列切开 attention</h2>
+  <div class="grid cols-2 fill">
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3>原理</h3>
+      <p>序列到 128K / 1M 时 attention 激活撑爆单卡。CP 沿<b>序列维度</b>把 Q/K/V 切到多卡，两种做法：</p>
+      <ul>
+        <li><b>Ring Attention</b>：每卡固定持自己那段 Q，KV 块沿环 <b>P2P</b> 流转，online-softmax 增量累加，N−1 步后每段 Q 见过全部 KV。（Megatron 的 <b>P2P 版 CP</b>）</li>
+        <li><b>Ulysses</b>：两次 <b>All-to-All</b> 在"序列并行 ↔ 头并行"间换轴，每卡本地算完整 attention，通信少但受 head 数限制。（Megatron 的 <b>A2A 版 CP</b>）</li>
+      </ul>
+      <div class="four" style="grid-template-columns:1fr 1fr;margin-top:8px">
+        <div class="f comm"><div class="h">通信</div><p>Ring：环形 P2P 传 KV，∝ seq·hidden；Ulysses：2×A2A。</p></div>
+        <div class="f comp"><div class="h">计算</div><p>增量 softmax，总量不变。</p></div>
+        <div class="f over"><div class="h">Overlap</div><p>算当前块时预取下一块 KV，重叠好。</p></div>
+        <div class="f aff"><div class="h">受影响</div><p>序列长度、CP 度、因果 mask 负载均衡。</p></div>
+      </div>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3>负载均衡：因果 mask 的 Zigzag 切分</h3>
+      <p>因果注意力下，序列<b>越靠后</b>的 token 要 attend 的越多。若顺序平均切给各卡，<b>后段的卡算得多、前段的卡闲着</b> → 负载严重不均。</p>
+      <img src="images/causal_workload.png" alt="Workload balance for causal attention: ZigZag-way & Striped-way" style="width:100%;border-radius:10px;margin:10px 0;background:#fff;padding:6px"/>
+      <div class="note good"><b>Zigzag 切分：</b>把序列切成 2N 块，第 i 张卡同时拿<b>第 i 块与第 (2N−1−i) 块</b>（一前一后配对），使每张卡的因果计算量大致相等；Striped 是另一种交错切法，目的相同。</div>
+    </div>
+  </div>
+</section>
+
+<!-- EP -->
+<section class="slide">
+  <h2><span class="num">13</span>专家并行 EP：把 MoE 的专家铺到多卡</h2>
+  <div class="grid cols-2 fill">
+    <div class="card" style="display:flex;flex-direction:column">
+      <h3>原理</h3>
+      <p>MoE 把 FFN 换成 N 个专家，每个 token 经 router 只路由到 top-k 个专家。EP 把专家<b>分散到不同卡</b>，每卡只放一部分专家。</p>
+      <ul>
+        <li><b>Dispatch</b>：All-to-All 把每个 token 送到它命中的专家所在卡。</li>
+        <li>本地算各自的专家 FFN。</li>
+        <li><b>Combine</b>：再一次 All-to-All 把结果按来源送回原 token 的卡。</li>
+      </ul>
+      <div class="note">通信发生在<b>层间</b>：每个 MoE 层，Expert 计算前后各一次 All-to-All。EP 与 DP/TP/PP <b>正交</b>，通常叠加使用。</div>
+    </div>
+    <div class="four" style="align-content:start">
+      <div class="f comm"><div class="h">通信</div><p>每 MoE 层 <b>2 次 All-to-All</b>，∝ token数·hidden·topk；跨机时最吃带宽。</p></div>
+      <div class="f comp"><div class="h">计算</div><p>各卡算自己的专家；<b>路由不均 → 有卡空转</b>（热门专家过载）。</p></div>
+      <div class="f over"><div class="h">Overlap</div><p>All-to-All 可与专家 / 共享专家计算重叠（如 DeepEP）。</p></div>
+      <div class="f aff"><div class="h">受影响</div><p>专家数、top-k、<b>路由均衡</b>、capacity、跨机带宽。</p></div>
+      <div class="f" style="grid-column:1/3"><div class="h" style="color:var(--warn)">负载均衡</div><p>靠 aux-loss / router 正则、capacity factor、drop/pad 或 token 重排，尽量让各专家收到的 token 数接近。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- DIVIDER P5 -->
+<section class="slide divider">
+  <div class="part">PART 4</div>
+  <h1>进阶讨论 · 扩展问题</h1>
+  <div class="desc">三个还在演进中的开放问题：新优化器、长序列、以及并行方案的取舍。</div>
+</section>
+
+<!-- DISCUSSION 1: MUON -->
+<section class="slide">
+  <h2><span class="num">14</span>扩展 ① Muon 优化器带来的新问题</h2>
+  <p class="lead" style="margin-bottom:9px">Muon 对每个 2D 权重矩阵，把梯度/动量做 <b>Newton-Schulz 正交化</b>（≈ 取 UVᵀ）再更新。问题：正交化<b>必须在完整矩阵上做</b>，而分布式训练里矩阵往往是<b>分片</b>的。</p>
+  <div class="grid cols-2 fill">
+    <div class="card">
+      <h3>和现有并行的冲突</h3>
+      <ul>
+        <li><b>ZeRO / FSDP</b>：梯度 Reduce-Scatter 后每卡只有 <span class="hl">1/N 分片</span>，参数也可能分片 → 直接对分片做 NS 与完整矩阵<b>不等价</b>。</li>
+        <li><b>TP</b>：权重按行/列切，单卡只有<b>子矩阵</b> → 同样拿不到完整矩阵。</li>
+        <li><b>计算如何并行</b>：NS 是若干次矩阵乘，本身有开销；是"先 gather 再单卡算"还是"分布式矩阵乘"要权衡。</li>
+        <li><b>MoE</b>：每个专家是独立矩阵，"哪个专家的 Muon 更新在哪张 rank 上算"需要显式划分。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>常见做法（Moonlight / Megatron）</h3>
+      <ul>
+        <li><b>更新前聚合</b>：对每个待更新矩阵，先把它的梯度沿分片维 <b>All-Gather</b> 成完整块，单卡跑 NS，再把结果 scatter 回分片（Moonlight「Muon is Scalable」在 ZeRO-1 上就是这么做的）。</li>
+        <li><b>参数级并行</b>：把不同参数矩阵的 NS 计算<b>分给不同 rank</b> 并行，算完再各自广播回去，摊平额外算力。</li>
+        <li><b>TP / EP</b>：按被切的维度把对应权重 gather 成完整矩阵再正交化；MoE 则把专家矩阵<b>按 rank 分配</b>做更新。</li>
+      </ul>
+      <div class="note warn" style="margin-top:8px">本质权衡：Muon 的收益 vs. 为"凑齐完整矩阵"额外付出的<b>通信 + 计算</b>；分片越细、矩阵越大，代价越明显。</div>
+    </div>
+  </div>
+</section>
+
+<!-- DISCUSSION 2: LONG SEQUENCE -->
+<section class="slide">
+  <h2><span class="num">15</span>扩展 ② 长序列训练：既要省显存又要保性能</h2>
+  <p class="lead" style="margin-bottom:9px">序列拉到 128K/1M 时，显存的三个新爆点：LM head 的大 logits、attention 激活、以及模型状态。分别对症下药：</p>
+  <div class="grid cols-3 fill">
+    <div class="card">
+      <h3>① LM Head 大 logits</h3>
+      <p>输出 logits 形状 [b·s, <b>vocab</b>]，vocab 常达 10~20 万 → 长序列下比模型本身还大。</p>
+      <div class="note good" style="margin-top:8px"><b>Cut Cross-Entropy：</b>不 materialize 完整 logits，按块在片上算 loss/梯度，只保留 logsumexp 等统计量 → 把 logits 显存从 O(s·vocab) 压到近乎 O(1)。</div>
+    </div>
+    <div class="card">
+      <h3>② Attention 激活</h3>
+      <p>attention 激活 ∝ 序列长度，单卡放不下。</p>
+      <div class="note good" style="margin-top:8px"><b>Ulysses(A2A) + Ring(P2P) 一起用：</b>Megatron 的两种 CP 组合成 <b>2D CP</b> —— Ulysses 切 head 维、Ring 沿序列进一步扩展，配合 Zigzag 均衡因果负载，序列可扩得更长。</div>
+    </div>
+    <div class="card">
+      <h3>③ 模型状态 + 激活</h3>
+      <p>参数/梯度/优化器状态仍是大头。</p>
+      <div class="note good" style="margin-top:8px"><b>FSDP + 重计算：</b>FSDP 把 16P 全部 /N，<b>卡越多越省</b>；再叠激活重计算把激活也压下去 —— 长序列场景下最省显存的组合。</div>
+    </div>
+  </div>
+  <div class="note" style="margin-top:10px">三招正交，可同时开：Cut-CE 治 logits、CP 治 attention、FSDP+重计算 治模型状态与残余激活。</div>
+</section>
+
+<!-- DISCUSSION 3: FSDP vs TP+PP -->
+<section class="slide">
+  <h2><span class="num">16</span>扩展 ③ FSDP 与 TP+PP 方案怎么选</h2>
+  <div class="grid cols-2 fill">
+    <div class="card">
+      <h3>基本格局</h3>
+      <ul>
+        <li>主流方案通常在 <b>FSDP</b> 与 <b>TP+PP</b> 之间<b>二选一</b>；<b>EP</b> 与两者<b>正交</b>，单独叠加讨论。</li>
+        <li><b>TP+PP</b> 受显存所限时，micro-batch 往往被迫开得很小 → 矩阵乘的<b>算术密度低</b>、MFU 上不去。</li>
+        <li>此时可换 <b>FSDP</b>：把省下来的显存<b>尽量把 micro-batch 开大</b>，拉高算术密度、提升 MFU。</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>但 FSDP 有规模上限</h3>
+      <ul>
+        <li>FSDP 的通信链路是<b>全局</b>的（整个 DP 域 All-Gather/Reduce-Scatter）。</li>
+        <li>规模升到<b>千卡以后</b>，很容易 <b>bound 在网络带宽</b>上。</li>
+        <li>关键看 FSDP 的<b>通算掩盖程度</b>：若通信能被计算掩盖 <b>≥ 80%</b>，FSDP 依旧划算；<b>不及 80%</b> 时，<b>TP+PP</b>（重通信留在机内 NVLink、跨机只走轻量 PP）可能更优。</li>
+      </ul>
+      <div class="note warn" style="margin-top:8px">一句话：<b>小规模/显存憋 micro-batch → FSDP 拉 MFU；超大规模/通信掩盖不住 → TP+PP。</b></div>
+    </div>
+  </div>
+</section>
+
+<!-- QA -->
+<section class="slide divider">
+  <div class="part">Q &amp; A</div>
+  <h1>谢谢 · 欢迎提问</h1>
+  <div class="desc">通信原语 → 训练流程 → 并行策略 → 进阶讨论。<br/><span class="small">有任何问题，欢迎交流。</span></div>
+</section>
+
+<div class="progress" id="progressbar" style="width:0"></div>
+<div class="foot">
+  <span class="title">分布式训练系统入门 · 从通信原语到并行策略</span>
+  <span><span id="pageno">1</span> / <span id="pagetotal">1</span></span>
+</div>
+<div class="hint">← → 翻页 · F 全屏</div>
+</div>
+</div>
+
+<script>
+(function(){
+  const slides=Array.from(document.querySelectorAll('.slide'));
+  let cur=0; const total=slides.length;
+  document.getElementById('pagetotal').textContent=total;
+  const deckEl=document.getElementById('deck');
+  function fit(){ const sc=Math.min(window.innerWidth/1280, window.innerHeight/720); deckEl.style.setProperty('--sc',sc); }
+  window.addEventListener('resize',fit); fit();
+  function show(i){
+    i=Math.max(0,Math.min(total-1,i));
+    slides[cur].classList.remove('active'); slides[i].classList.add('active'); cur=i;
+    document.getElementById('pageno').textContent=i+1;
+    document.getElementById('progressbar').style.width=(i/(total-1)*100)+'%';
+    if(slides[i].dataset.built!=='1'){ buildDynamic(i); slides[i].dataset.built='1'; }
+  }
+  function next(){show(cur+1);} function prev(){show(cur-1);}
+  document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){e.preventDefault();next();}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();prev();}
+    else if(e.key==='Home')show(0); else if(e.key==='End')show(total-1);
+    else if(e.key==='f'||e.key==='F'){ if(!document.fullscreenElement)document.documentElement.requestFullscreen(); else document.exitFullscreen(); }
+  });
+  document.getElementById('deck').addEventListener('click',e=>{
+    if(e.target.closest('.no-nav')||e.target.closest('.btn')||e.target.closest('.opbtn')||e.target.closest('.pbtn')) return;
+    const x=e.clientX/window.innerWidth;
+    if(x>0.62)next(); else if(x<0.12)prev();
+  });
+
+  /* ============ Pipeline timing diagrams ============ */
+  const CF=['#5b8cff','#38e1c4','#b98cff','#ffb454','#ff7fd0','#46d17f'];
+  /* Dependency-based scheduler: mode='gpipe' (all-F then all-B) or '1f1b' (interleaved). */
+  function schedPipe(p,m,mode){
+    const order=[];
+    for(let r=0;r<p;r++){const ops=[];
+      if(mode==='gpipe'){for(let f=0;f<m;f++)ops.push({t:'F',mb:f});for(let b=0;b<m;b++)ops.push({t:'B',mb:b});}
+      else{const w=p-1-r;let f=0,b=0;for(let k=0;k<w;k++)ops.push({t:'F',mb:f++});while(f<m){ops.push({t:'F',mb:f++});ops.push({t:'B',mb:b++});}while(b<m)ops.push({t:'B',mb:b++});}
+      order.push(ops);}
+    const fin={},K=(r,t,mb)=>r+t+mb,ptr=Array(p).fill(0),dt=Array(p).fill(0),cells=[];let rem=p*m*2,guard=0;
+    while(rem>0&&guard++<40000){let prog=false;
+      for(let r=0;r<p;r++){if(ptr[r]>=order[r].length)continue;const op=order[r][ptr[r]];let dep=0,ok=true;
+        if(op.t==='F'&&r>0){const d=fin[K(r-1,'F',op.mb)];if(d===undefined)ok=false;else dep=d;}
+        if(op.t==='B'&&r<p-1){const d=fin[K(r+1,'B',op.mb)];if(d===undefined)ok=false;else dep=d;}
+        if(!ok)continue;const st=Math.max(dt[r],dep);cells.push({stage:r,slot:st,mb:op.mb,type:op.t});fin[K(r,op.t,op.mb)]=st+1;dt[r]=st+1;ptr[r]++;rem--;prog=true;}
+      if(!prog)break;}
+    return {cells,maxSlot:Math.max(...cells.map(c=>c.slot))+1};
+  }
+  function drawGrid(svg,cells,p,slots,title){
+    const W=500,H=130,padL=42,padT=10,cw=(W-padL-8)/slots,ch=(H-padT-24)/p;
+    let s='';
+    for(let r=0;r<p;r++){s+=`<text x="6" y="${padT+ch*r+ch/2+4}" fill="#9fb0d0" font-size="10" font-family="monospace">D${r}</text>`;s+=`<rect x="${padL}" y="${padT+ch*r+1}" width="${W-8-padL}" height="${ch-2}" rx="2" fill="rgba(255,255,255,.02)" stroke="#243352"/>`;}
+    cells.forEach(c=>{const x=padL+c.slot*cw,y=padT+c.stage*ch,col=CF[c.mb%CF.length];
+      if(c.type==='F')s+=`<rect x="${x+1}" y="${y+2}" width="${cw-2}" height="${ch-4}" rx="2" fill="${col}"/>`;
+      else s+=`<rect x="${x+1}" y="${y+2}" width="${cw-2}" height="${ch-4}" rx="2" fill="#0e1730" stroke="${col}" stroke-width="1.6"/>`;
+      s+=`<text x="${x+cw/2}" y="${y+ch/2+3.5}" text-anchor="middle" font-size="9" font-family="monospace" font-weight="700" fill="${c.type==='F'?'#06101f':col}">${c.type}${c.mb+1}</text>`;});
+    s+=`<text x="${padL}" y="${H-5}" fill="#cfd8ee" font-size="10.5" font-family="monospace">${title}　实心=前向·空心=反向　→ 时间</text>`;
+    svg.innerHTML=s;
+  }
+  function buildGPipe(){const {cells,maxSlot}=schedPipe(4,4,'gpipe');const svg=document.getElementById('gpipe-svg');if(svg)drawGrid(svg,cells,4,maxSlot,'GPipe');}
+  function build1F1B(){const {cells,maxSlot}=schedPipe(4,4,'1f1b');const svg=document.getElementById('onefone-svg');if(svg)drawGrid(svg,cells,4,maxSlot,'1F1B');}
+
+  /* ============ Communication primitives animation ============ */
+  const P={svg:null,N:4,buffer:null,packets:null,raf:null,t0:0,duration:0,op:null,playing:false};
+  const RC=['#5b8cff','#38e1c4','#b98cff','#ffb454']; const SUM='#46d17f';
+  const VB={w:900,h:340};
+  function nodeGeom(n){
+    if(P.layout==='ring'){
+      const cx0=450,cy0=168,rx=205,ry=108; const ang=-Math.PI/2+n*2*Math.PI/P.N;
+      const cx=cx0+rx*Math.cos(ang), cyc=cy0+ry*Math.sin(ang); const w=140,h=76;
+      return {x:cx-w/2,y:cyc-h/2,w,h,cx,cy:cyc,link:cyc};
+    }
+    const nodeW=170,gap=54,totalW=P.N*nodeW+(P.N-1)*gap,startX=(900-totalW)/2;
+    const x=startX+n*(nodeW+gap);
+    return {x,y:210,w:nodeW,h:100,cx:x+nodeW/2,cy:260,link:210};
+  }
+  function slotGeom(n,k){ const g=nodeGeom(n); const sw=32,gap=6,cnt=P.slots,tot=cnt*sw+(cnt-1)*gap; const sx=g.cx-tot/2+k*(sw+gap); const sy=(P.layout==='ring')?g.cy+4:250; return {x:sx,y:sy,w:sw,h:34}; }
+  function mk(c,l){ return {c,l}; }
+
+  const OPS={
+    broadcast:{name:'Broadcast',slots:1,use:'root 把同一份数据发给所有卡。<br/><b>量</b>：(N-1)·S。<br/><b>用途</b>：加载/分发权重、同组内发相同 batch。',
+      desc:'GPU0 (root) 持有数据 D，复制发送到其余所有卡。结束后每张卡都有一份相同的 D。',
+      build(){ const buf=empty(); buf[0][0]=mk(RC[0],'D'); const pk=[]; for(let n=1;n<P.N;n++)pk.push(pkt(0,0,n,0,RC[0],'D',(n-1)*0.25)); return {buf,pk,final(b){for(let n=1;n<P.N;n++)b[n][0]=mk(RC[0],'D');}}; }},
+    scatter:{name:'Scatter',use:'root 把一个大数组切成 N 片，<b>每卡发不同的一片</b>。<br/><b>用途</b>：数据/参数分发。',
+      desc:'GPU0 持有 4 片数据(D0..D3)，把 Dk 发给 GPUk。结束后每卡各持一片。',
+      build(){ const buf=empty(); for(let k=0;k<P.N;k++)buf[0][k]=mk(RC[k],'D'+k); const pk=[]; for(let n=1;n<P.N;n++)pk.push(pkt(0,n,n,n,RC[n],'D'+n,(n-1)*0.25)); return {buf,pk,final(b){for(let n=0;n<P.N;n++)for(let k=0;k<P.N;k++)b[n][k]=(k===n)?mk(RC[n],'D'+n):null;}}; }},
+    gather:{name:'Gather',use:'与 Scatter 相反：<b>各卡的一片汇集到 root</b>。<br/><b>用途</b>：收集分散的输出。',
+      desc:'GPUk 各持一片 Dk，全部发到 GPU0。结束后 GPU0 收齐 4 片。',
+      build(){ const buf=empty(); for(let n=0;n<P.N;n++)buf[n][n]=mk(RC[n],'D'+n); const pk=[]; for(let n=1;n<P.N;n++)pk.push(pkt(n,0,0,n,RC[n],'D'+n,(n-1)*0.25)); return {buf,pk,final(b){for(let n=1;n<P.N;n++)b[n][n]=null; for(let k=0;k<P.N;k++)b[0][k]=mk(RC[k],'D'+k);}}; }},
+    reduce:{name:'Reduce',slots:1,use:'各卡数据<b>规约(求和)后只有 root 拿到</b>结果。<br/><b>用途</b>：汇总标量/统计量。',
+      desc:'每卡持一份数值，全部发到 GPU0 累加。结束后只有 GPU0 拿到总和(绿色 Σ)。',
+      build(){ const buf=empty(); for(let n=0;n<P.N;n++)buf[n][0]=mk(RC[n],'v'+n); const pk=[]; for(let n=1;n<P.N;n++)pk.push(pkt(n,0,0,0,RC[n],'+',(n-1)*0.25)); return {buf,pk,final(b){for(let n=1;n<P.N;n++)b[n][0]=null; b[0][0]=mk(SUM,'Σ');}}; }},
+    allgather:{name:'All-Gather',use:'各卡一片，<b>结束后每卡都拿到全部拼接</b>。<br/><b>量</b>：(N-1)·S。<br/><b>用途</b>：SP 补全序列、ZeRO-3 聚合参数。',
+      desc:'GPUk 各持一片 Dk。逐张卡演示：先让 GPU0 收齐全部分片，再 GPU1、GPU2、GPU3。结束后每卡都拥有完整 4 片。',
+      build(){ const buf=empty(); for(let n=0;n<P.N;n++)buf[n][n]=mk(RC[n],'D'+n); const pk=[],caps=[]; const step=1.35,dur=0.9;
+        for(let dst=0;dst<P.N;dst++){ caps.push({t:dst*step,txt:`GPU${dst} 收集其余卡的分片`}); for(let src=0;src<P.N;src++)if(src!==dst)pk.push(pkt(src,dst,dst,src,RC[src],'D'+src,dst*step,dur)); }
+        return {buf,pk,caps,final(b){for(let n=0;n<P.N;n++)for(let k=0;k<P.N;k++)b[n][k]=mk(RC[k],'D'+k);}}; }},
+    reducescatter:{name:'Reduce-Scatter',use:'先规约再分片：<b>每卡只保留规约结果的 1/N</b>。<br/><b>用途</b>：SP、分布式优化器切梯度。',
+      desc:'每卡持完整 4 分量向量。逐个分量演示：先把分量0 在各卡求和汇到 GPU0，再分量1→GPU1…。每卡最终只留自己那一份规约结果(绿)。',
+      build(){ const buf=empty(); for(let n=0;n<P.N;n++)for(let k=0;k<P.N;k++)buf[n][k]=mk('#40527d','v'); const pk=[],caps=[]; const step=1.35,dur=0.9;
+        for(let k=0;k<P.N;k++){ caps.push({t:k*step,txt:`分量${k} 在各卡求和 → 汇到 GPU${k}`}); for(let src=0;src<P.N;src++)if(src!==k)pk.push(pkt(src,k,k,k,RC[src],'+',k*step,dur)); }
+        return {buf,pk,caps,final(b){for(let n=0;n<P.N;n++)for(let k=0;k<P.N;k++)b[n][k]=(k===n)?mk(SUM,'Σ'+n):null;}}; }},
+    allreduce:{name:'All-Reduce',use:'各卡规约后<b>所有卡都拿到相同结果</b>。<br/><b>= Reduce-Scatter + All-Gather</b>，量≈2S 与卡数无关(Ring)。<br/><b>用途</b>：DP 梯度、TP 激活。',
+      desc:'两阶段：先 Reduce-Scatter 逐分量汇总(每卡持 1 个规约块，绿)，再 All-Gather 逐卡补齐。结束后每卡都有全部规约结果。',
+      build(){ const buf=empty(); for(let n=0;n<P.N;n++)for(let k=0;k<P.N;k++)buf[n][k]=mk('#40527d','v'); const pk=[],caps=[]; const step=1.2,dur=0.85;
+        for(let k=0;k<P.N;k++){ caps.push({t:k*step,txt:`① Reduce-Scatter：分量${k} 汇到 GPU${k}`}); for(let src=0;src<P.N;src++)if(src!==k)pk.push(pkt(src,k,k,k,RC[src],'+',k*step,dur)); }
+        const base=P.N*step+0.5;
+        for(let dst=0;dst<P.N;dst++){ caps.push({t:base+dst*step,txt:`② All-Gather：把规约块广播到 GPU${dst}`}); for(let src=0;src<P.N;src++)if(src!==dst)pk.push(pkt(src,dst,dst,src,SUM,'Σ',base+dst*step,dur)); }
+        return {buf,pk,caps,final(b){for(let n=0;n<P.N;n++)for(let k=0;k<P.N;k++)b[n][k]=mk(SUM,'Σ'+k);}}; }},
+    alltoall:{name:'All-to-All',use:'每卡向<b>每张卡各发一块不同</b>的数据，像矩阵转置。<br/><b>用途</b>：MoE dispatch / combine。',
+      desc:'GPUi 持有 4 块，第 j 块要发给 GPUj。逐张卡演示：先让 GPU0 收齐各卡发来的块，再 GPU1…。交换后 GPUi 第 k 格来自 GPUk。颜色=来源卡。',
+      build(){ const buf=empty(); for(let n=0;n<P.N;n++)for(let k=0;k<P.N;k++)buf[n][k]=mk(RC[n],n+'→'+k); const pk=[],caps=[]; const step=1.35,dur=0.9;
+        for(let dst=0;dst<P.N;dst++){ caps.push({t:dst*step,txt:`GPU${dst} 接收各卡发来的块`}); for(let src=0;src<P.N;src++)if(src!==dst)pk.push(pkt(src,dst,dst,src,RC[src],src+'',dst*step,dur)); }
+        return {buf,pk,caps,final(b){for(let n=0;n<P.N;n++)for(let k=0;k<P.N;k++)b[n][k]=mk(RC[k],k+'→'+n);}}; }},
+    p2p:{name:'Send / Recv',N:2,slots:1,use:'两张卡之间点对点直传，最基础的操作。<br/><b>量</b>：S。<br/><b>用途</b>：PP 相邻 stage 间传激活。',
+      desc:'只涉及两张卡：GPU0 把数据 D 直接发给 GPU1（sender/receiver），其它卡不参与。这是流水线并行 PP 层间通信的基本单元。',
+      build(){ const buf=empty(); buf[0][0]=mk(RC[0],'D'); const pk=[pkt(0,0,1,0,RC[0],'D',0,0.9)]; return {buf,pk,caps:[{t:0,txt:'GPU0 → GPU1 传一份数据'}],final(b){b[1][0]=mk(RC[0],'D');}}; }},
+    ring:{name:'Ring Send/Recv',N:4,slots:1,layout:'ring',use:'N 张卡排成<b>环</b>，每步每卡把手里的数据块发给下一个邻居，共 N-1 步后<b>每卡都见过所有块</b>。<br/><b>用途</b>：Ring All-Reduce 的底层、CP 环传等。',
+      desc:'环形点对点：每张卡持有一个数据块，每一步同时把当前块发给顺时针的下一张卡。3 步后每卡依次见过全部 4 个块 —— 这里只展示通信模式本身。',
+      build(){ const N=P.N; const buf=empty(); for(let n=0;n<N;n++)buf[n][0]=mk(RC[n],'D'+n); const pk=[],caps=[]; const step=1.35,dur=1.0;
+        for(let r=0;r<N-1;r++){ caps.push({t:r*step,txt:`第 ${r+1}/${N-1} 步：数据块沿环顺时针传一格`}); for(let g=0;g<N;g++){ const src=((g-r)%N+N)%N; pk.push(pkt(g,(g+1)%N,(g+1)%N,0,RC[src],'D'+src,r*step,dur)); } }
+        return {buf,pk,caps,final(b){ for(let n=0;n<N;n++){ const src=((n-(N-1))%N+N)%N; b[n][0]=mk(RC[src],'D'+src);} }}; }}
+  };
+  function empty(){ const b=[]; for(let n=0;n<P.N;n++){const r=[]; for(let k=0;k<P.N;k++)r.push(null); b.push(r);} return b; }
+  function pkt(from,fslot,to,tslot,c,l,delay,dur){ return {from,to,tslot,c,l,delay,dur:dur||0.55,arr:false}; }
+
+  function ctrl(x0,y0,x1,y1){
+    if(P.layout==='ring'){ const mx=(x0+x1)/2,my=(y0+y1)/2,cx=450,cy=168; let dx=mx-cx,dy=my-cy; const d=Math.hypot(dx,dy)||1; const push=48; return {mx:mx+dx/d*push,my:my+dy/d*push}; }
+    return {mx:(x0+x1)/2, my:Math.min(y0,y1)-90};
+  }
+  function bezAt(x0,y0,x1,y1,t){ const c=ctrl(x0,y0,x1,y1); const u=1-t; return {x:u*u*x0+2*u*t*c.mx+t*t*x1, y:u*u*y0+2*u*t*c.my+t*t*y1}; }
+  function renderPaths(t){
+    if(!P.packets)return '';
+    let s='';
+    P.packets.forEach(p=>{
+      if(p.delay>t)return;                 // not yet started → don't clutter
+      const lt=(t-p.delay)/p.dur;
+      const active=lt<1;
+      const g0=nodeGeom(p.from),g1=nodeGeom(p.to); const c=ctrl(g0.cx,g0.link,g1.cx,g1.link);
+      const op=active?0.9:0.22, w=active?2.4:1.2;
+      s+=`<path d="M${g0.cx},${g0.link} Q${c.mx},${c.my} ${g1.cx},${g1.link}" fill="none" stroke="${p.c}" stroke-width="${w}" stroke-dasharray="6 5" opacity="${op}"/>`;
+    });
+    return s;
+  }
+
+  function renderStatic(){
+    let s=''; 
+    for(let n=0;n<P.N;n++){
+      const g=nodeGeom(n);
+      s+=`<rect x="${g.x}" y="${g.y}" width="${g.w}" height="${g.h}" rx="12" fill="#1d2a4d" stroke="#5b8cff" stroke-width="2"/>`;
+      s+=`<text x="${g.cx}" y="${g.y+(P.layout==='ring'?18:24)}" text-anchor="middle" fill="#e8edf7" font-size="15" font-family="monospace">GPU${n}</text>`;
+      for(let k=0;k<P.slots;k++){
+        const sg=slotGeom(n,k); const cell=P.buffer[n][k];
+        s+=`<rect x="${sg.x}" y="${sg.y}" width="${sg.w}" height="${sg.h}" rx="5" fill="${cell?cell.c:'#0e1630'}" stroke="#2a3a63" ${cell?'':'stroke-dasharray="3 3"'}/>`;
+        if(cell)s+=`<text x="${sg.x+sg.w/2}" y="${sg.y+sg.h/2+4}" text-anchor="middle" fill="#0b1020" font-size="11" font-family="monospace" font-weight="700">${cell.l}</text>`;
+      }
+    }
+    return s;
+  }
+  function draw(now){
+    const t=(now-P.t0)/1000;
+    let moving='';
+    let done=true;
+    P.packets.forEach(p=>{
+      const lt=(t-p.delay)/p.dur;
+      if(lt<0){done=false;return;}
+      if(lt>=1){ if(!p.arr){ p.arr=true; P.buffer[p.to][p.tslot]=mk(p.l==='+'?SUM:p.c, p.l==='+'?'Σ':p.l); } return; }
+      done=false;
+      const g0=nodeGeom(p.from),g1=nodeGeom(p.to);
+      const pos=bezAt(g0.cx,g0.link,g1.cx,g1.link,lt);
+      moving+=`<circle cx="${pos.x}" cy="${pos.y}" r="11" fill="${p.c}" stroke="#0b1020" stroke-width="1.5"/>`;
+      moving+=`<text x="${pos.x}" y="${pos.y+4}" text-anchor="middle" fill="#0b1020" font-size="10" font-family="monospace" font-weight="700">${p.l}</text>`;
+    });
+    // step caption
+    let cap='';
+    const caps=P.opdef&&P.opdef.caps;
+    if(caps){ let chosen=null; caps.forEach(cc=>{ if(t>=cc.t)chosen=cc; }); if(chosen)cap=`<text x="450" y="26" text-anchor="middle" fill="#38e1c4" font-size="14" font-family="monospace">${chosen.txt}</text>`; }
+    P.svg.innerHTML=renderPaths(t)+renderStatic()+moving+cap;
+    if(done){
+      if(P.opdef&&P.opdef.final)P.opdef.final(P.buffer);
+      P.svg.innerHTML=renderPaths(t)+renderStatic();
+      P.playing=false;
+      document.getElementById('prim-status').textContent='✓ 完成';
+      return;
+    }
+    P.raf=requestAnimationFrame(draw);
+  }
+  function runOp(id){
+    if(P.raf)cancelAnimationFrame(P.raf);
+    P.op=id; const def=OPS[id];
+    P.N=def.N||4; P.layout=def.layout||'row'; P.slots=def.slots||P.N;
+    P.opdef=def.build();
+    P.buffer=P.opdef.buf; P.packets=P.opdef.pk; P.t0=performance.now(); P.playing=true;
+    document.getElementById('prim-desc').innerHTML=def.desc;
+    document.getElementById('prim-use').innerHTML=def.use;
+    document.getElementById('prim-status').textContent='▶ 传输中…';
+    document.querySelectorAll('.opbtn').forEach(b=>b.classList.toggle('active',b.dataset.op===id));
+    P.raf=requestAnimationFrame(draw);
+  }
+
+  function initPrimitives(){
+    P.svg=document.getElementById('prim-svg');
+    document.querySelectorAll('.opbtn').forEach(b=>{ b.onclick=()=>runOp(b.dataset.op); });
+    document.getElementById('prim-replay').onclick=()=>{ if(P.op)runOp(P.op); };
+    // initial idle render
+    P.N=4; P.slots=4; P.layout='row';
+    P.buffer=empty(); for(let n=0;n<P.N;n++)P.buffer[n][n]=mk(RC[n],'D'+n);
+    P.svg.innerHTML=renderStatic();
+    // auto-play the first (allreduce) to grab attention
+    setTimeout(()=>runOp('allreduce'),400);
+  }
+
+  /* ============ Parallelism strategy playground v2 ============ */
+  const PL={svg:null,segs:[],S:null,scene:null,t0:0,raf:null,idx:-1,strat:null,phase:null,lastCap:''};
+  const FWD='#46d17f',BWD='#ff6b7a',COMM='#38e1c4',WCOL='#5b8cff',GCOL='#ff7fd0',OPT='#ffb454',MUT='#9fb0d0',LINE='#33456f',ACTC='#38e1c4';
+  function T(x,y,str,o){o=o||{};return `<text x="${x}" y="${y}" text-anchor="${o.a||'middle'}" fill="${o.f||'#e8edf7'}" font-size="${o.s||12}" font-family="${o.m?'monospace':'inherit'}"${o.w?` font-weight="${o.w}"`:''}>${str}</text>`;}
+  function R(x,y,w,h,r,f,st,sw,dash){return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r||0}" fill="${f||'none'}"${st?` stroke="${st}" stroke-width="${sw||1.5}"`:''}${dash?` stroke-dasharray="${dash}"`:''}/>`;}
+  function LN(x1,y1,x2,y2,c,w,dash){return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${w||2}"${dash?` stroke-dasharray="${dash}"`:''}/>`;}
+  function DOT(x,y,c,l){return `<circle cx="${x}" cy="${y}" r="11" fill="${c}" stroke="#06101f" stroke-width="1.5"/>`+(l?T(x,y+4,l,{s:10,m:1,w:700,f:'#06101f'}):'');}
+  function ptOn(pts,p){let tot=0,seg=[];for(let i=0;i<pts.length-1;i++){const l=Math.hypot(pts[i+1][0]-pts[i][0],pts[i+1][1]-pts[i][1]);seg.push(l);tot+=l;}let d=p*tot;for(let i=0;i<seg.length;i++){if(d<=seg[i]||i===seg.length-1){const r=seg[i]?d/seg[i]:0;return [pts[i][0]+(pts[i+1][0]-pts[i][0])*r,pts[i][1]+(pts[i+1][1]-pts[i][1])*r];}d-=seg[i];}return pts[pts.length-1];}
+  function lanesG(N){const top=48,bot=356,gap=N>2?12:18;const h=(bot-top-(N-1)*gap)/N;const a=[];for(let n=0;n<N;n++){const y=top+n*(h+gap);a.push({y,h,cy:y+h/2});}return a;}
+  function capSVG(t){return t?T(480,22,t,{s:15,m:1,f:COMM}):'';}
+  function chip2(cx,y,l,c){const w=Math.max(72,l.length*8+16);return R(cx-w/2,y,w,20,5,c)+T(cx,y+14,l,{s:11,m:1,w:700,f:'#06101f'});}
+
+  function plStop(){if(PL.raf)cancelAnimationFrame(PL.raf);PL.raf=null;}
+  function plStart(){plStop();PL.t0=performance.now();PL.idx=-1;PL.raf=requestAnimationFrame(plLoop);}
+  function plLoop(now){
+    const t=(now-PL.t0)/1000;let acc=0,i=0,seg=null,local=0;
+    for(;i<PL.segs.length;i++){const sg=PL.segs[i];if(t<acc+sg.dur){seg=sg;local=(t-acc)/sg.dur;break;}acc+=sg.dur;}
+    const upto=seg?i:PL.segs.length-1;
+    while(PL.idx<upto){PL.idx++;const sg=PL.segs[PL.idx];if(sg){if(sg.enter)sg.enter(PL.S);if(sg.cap)PL.lastCap=sg.cap;}}
+    if(!seg){PL.svg.innerHTML=PL.scene(PL.S,t)+capSVG(PL.lastCap);document.getElementById('para-status').textContent='✓ 完成（点 ▶ 重播）';PL.raf=null;return;}
+    if(seg.cap)PL.lastCap=seg.cap;
+    const ov=seg.draw?seg.draw(local,PL.S,t):'';
+    PL.svg.innerHTML=PL.scene(PL.S,t)+ov+capSVG(seg.cap||PL.lastCap);
+    PL.raf=requestAnimationFrame(plLoop);
+  }
+
+  /* ---- DP / ZeRO family ---- */
+  const DPB=[{id:'x',x:34,w:48,label:'x',kind:'io'},{id:'l0',x:96,w:146,label:'Layer0',kind:'layer'},{id:'l1',x:256,w:146,label:'Layer1',kind:'layer'},{id:'lm',x:416,w:146,label:'LM Head',kind:'layer'},{id:'loss',x:576,w:64,label:'loss',kind:'io'}];
+  const DPLAYS=['l0','l1','lm'];
+  function dpLbl(id){return {l0:'Layer0',l1:'Layer1',lm:'LM Head',x:'x',loss:'loss'}[id];}
+  function dpFlowY(Lg){return Lg.y+51;}
+  function dpGapY(){const Lg=lanesG(2);return {y0:Lg[0].y+22+(Lg[0].h-30),y1:Lg[1].y+22,gc:(Lg[0].y+22+(Lg[0].h-30)+Lg[1].y+22)/2};}
+  function dpDrawBlock(S,n,b,Lg){
+    const bx=b.x,by=Lg.y+22,bw=b.w,bh=Lg.h-30;let stroke=LINE,sw=1.5;
+    if(S.fw[b.id])stroke=FWD;if(S.bw[b.id])stroke=BWD;
+    if(S.cur&&S.cur.id===b.id){stroke=S.cur.m==='B'?BWD:(S.cur.m==='O'?OPT:FWD);sw=3;}
+    let s=R(bx,by,bw,bh,8,'#111a33',stroke,sw);
+    s+=T(bx+bw/2,by+15,b.label,{s:11,m:1});
+    if(b.kind==='layer'){
+      const wx=bx+12,ww=bw-24,wy=by+44,wh=22;const frac=S.wFull[b.id]?1:S.wIdle;
+      s+=R(wx,wy,ww,wh,4,'none',WCOL,1,'4 3');s+=R(wx,wy,Math.max(3,ww*frac),wh,4,WCOL);
+      s+=T(wx+ww*frac/2,wy+wh/2+4,'W',{s:11,m:1,w:700,f:'#06101f'});
+      if(frac<1)s+=T(wx+ww*frac+ww*(1-frac)/2,wy+wh/2+4,'缺',{s:9,m:1,f:WCOL});
+      if(S.gShow){const gy=by+72,gh=13,gs=S.grad[b.id];
+        if(gs){const gf=gs==='shard'?S.gIdle:1;s+=R(wx,gy,ww,gh,3,'none',GCOL,1,'4 3');s+=R(wx,gy,Math.max(3,ww*gf),gh,3,GCOL);s+=T(wx+ww*gf/2,gy+10,gs==='shard'?'∇1/N':'∇',{s:9,m:1,w:700,f:'#06101f'});}
+        else s+=R(wx,gy,ww,gh,3,'none',LINE,1,'3 3');}
+    }
+    return s;
+  }
+  function memBar(x,y,w,h,sharded,c){if(!sharded)return R(x,y,w,h,5,c)+T(x+w/2,y+h/2+4,'完整 · 每卡都存',{s:10,m:1,f:'#06101f',w:700});
+    let s='';const cw=(w-6)/2;s+=R(x,y,cw,h,5,c)+T(x+cw/2,y+h/2+4,'本卡 1/N',{s:10,m:1,f:'#06101f',w:700});s+=R(x+cw+6,y,cw,h,5,'none',c,1.2,'4 3')+T(x+cw+6+cw/2,y+h/2+4,'其余在他卡',{s:9,m:1,f:c});return s;}
+  function optPanel(S){const x=660,y=48,w=282,h=308;let s=R(x,y,w,h,10,'#0e1730',LINE,1.5);
+    s+=T(x+w/2,y+20,'每卡显存占用  (P=参数量)',{s:12,m:1,f:MUT});
+    const rows=[['参数 fp16',S.shard.param,WCOL,2],['梯度 fp16',S.shard.grad,GCOL,2],['优化器 fp32 P,m,v',S.shard.optim,OPT,12]];
+    rows.forEach((r,i)=>{const ry=y+36+i*54;const sz=r[1]?(r[3]+'P/N'):(r[3]+'P');
+      s+=T(x+16,ry+9,r[0],{s:11,a:'start',f:'#cfd8ee'});s+=T(x+w-16,ry+9,sz,{s:10,a:'end',f:r[2],m:1});
+      s+=memBar(x+16,ry+14,w-32,22,r[1],r[2]);});
+    const N=8,tot=(S.shard.param?2/N:2)+(S.shard.grad?2/N:2)+(S.shard.optim?12/N:12);
+    const ty=y+202;
+    s+=T(x+16,ty+10,'每卡合计',{s:12,a:'start',f:'#ffffff',w:700});s+=T(x+w-16,ty+10,tot.toFixed(2)+'P',{s:12,a:'end',f:'#ffffff',m:1,w:700});
+    s+=R(x+16,ty+16,w-32,22,5,'none',LINE,1.2,'3 3');s+=R(x+16,ty+16,(w-32)*tot/16,22,5,'#3a7bd5');
+    s+=T(x+w/2,y+h-30,'DP=16P 为基准 · N=8',{s:10,m:1,f:MUT});
+    s+=T(x+w/2,y+h-12,S.shard.param?'ZeRO-3：参数+梯度+优化器全分片':(S.shard.grad?'ZeRO-2：梯度+优化器分片':(S.shard.optim?'ZeRO-1：仅优化器分片':'DP：全部冗余')),{s:11,m:1,f:ACTC});
+    return s;}
+  function sceneDP(S){let s=optPanel(S);const Lg=lanesG(2);
+    for(let n=0;n<2;n++){const fy=dpFlowY(Lg[n]);s+=T(34,Lg[n].y+14,'GPU'+n+' · batch'+n,{s:11,a:'start',f:MUT,m:1});
+      for(let k=0;k<S.blocks.length-1;k++){const b=S.blocks[k];s+=LN(b.x+b.w,fy,S.blocks[k+1].x,fy,LINE,1.5);}
+      S.blocks.forEach(b=>{s+=dpDrawBlock(S,n,b,Lg[n]);});}
+    return s;}
+  function flowDot(S,id,p,c){const b=S.blocks.find(x=>x.id===id);if(!b)return'';const Lg=lanesG(2);let s='';for(let n=0;n<2;n++)s+=DOT(b.x+b.w*p,dpFlowY(Lg[n]),c);return s;}
+  function vComm(S,id,p,c,label){const b=S.blocks.find(x=>x.id===id);const xc=b.x+b.w/2;const G=dpGapY();
+    let s=LN(xc,G.y0,xc,G.y1,c,1.4,'4 4');
+    s+=`<circle cx="${xc}" cy="${G.y0+(G.gc-G.y0)*p}" r="7" fill="${c}" stroke="#06101f" stroke-width="1.5"/>`;
+    s+=`<circle cx="${xc}" cy="${G.y1-(G.y1-G.gc)*p}" r="7" fill="${c}" stroke="#06101f" stroke-width="1.5"/>`;
+    const bw=Math.max(108,label.length*7.4+22);s+=R(xc-bw/2,G.gc-11,bw,22,6,'#0b1226',c,1.6);s+=T(xc,G.gc+4,label,{s:11,m:1,f:c});
+    return s;}
+  function agWeight(S,id,p){const b=S.blocks.find(x=>x.id===id);const Lg=lanesG(2);let s='';
+    for(let n=0;n<2;n++){const wx=b.x+12,ww=b.w-24,wy=Lg[n].y+22+44;s+=R(wx,wy,ww*(S.wIdle+(1-S.wIdle)*p),22,4,WCOL);s+=T(wx+ww/2,wy+15,'W',{s:11,m:1,w:700,f:'#06101f'});}
+    const xc=b.x+b.w/2,G=dpGapY();s+=LN(xc,G.y0,xc,G.y1,WCOL,1.4,'4 4');
+    s+=`<circle cx="${xc}" cy="${G.gc+(G.y0-G.gc)*p}" r="7" fill="${WCOL}" stroke="#06101f" stroke-width="1.5"/>`;
+    s+=`<circle cx="${xc}" cy="${G.gc+(G.y1-G.gc)*p}" r="7" fill="${WCOL}" stroke="#06101f" stroke-width="1.5"/>`;
+    s+=R(xc-58,G.gc-11,116,22,6,'#0b1226',WCOL,1.6);s+=T(xc,G.gc+4,'All-Gather 权重',{s:11,m:1,f:WCOL});return s;}
+  function pulseUpd(S,p){const Lg=lanesG(2);let s='';DPLAYS.forEach(id=>{const b=S.blocks.find(x=>x.id===id);for(let n=0;n<2;n++){const cx=b.x+b.w/2,cy=Lg[n].y+22+55;s+=`<circle cx="${cx}" cy="${cy}" r="${7+3*Math.abs(Math.sin(p*Math.PI*3))}" fill="none" stroke="${OPT}" stroke-width="2"/>`;}});return s;}
+  function pulseUpdShard(S,p){const Lg=lanesG(2);let s='';DPLAYS.forEach(id=>{const b=S.blocks.find(x=>x.id===id);const wx=b.x+12,ww=b.w-24,shw=ww/4;for(let n=0;n<2;n++){const wy=Lg[n].y+22+44;s+=R(wx,wy,shw,22,3,'rgba(255,180,84,.25)',OPT,2);const cx=wx+shw/2,cy=wy+11;s+=`<circle cx="${cx}" cy="${cy}" r="${5+2*Math.abs(Math.sin(p*Math.PI*3))}" fill="none" stroke="${OPT}" stroke-width="1.8"/>`;}});return s;}
+  function buildDP(cfg,phase){
+    const S={blocks:DPB,wIdle:cfg.wIdle,gIdle:cfg.gIdle,shard:cfg.shard,fw:{},bw:{},wFull:{},grad:{},gShow:false,cur:null};
+    const segs=[];const mini=fn=>({dur:.02,enter:fn});
+    const perlayer=cfg.wGather==='perlayer',release=!!cfg.release;
+    if(phase==='fwd'){
+      segs.push({dur:.6,cap:'前向：输入 x 进入模型',enter:S=>{S.cur={id:'x',m:'F'};S.fw.x=1;},draw:(p,S)=>flowDot(S,'x',p,FWD)});
+      DPLAYS.forEach(id=>{
+        if(perlayer){segs.push({dur:.95,cap:'All-Gather '+dpLbl(id)+' 权重（逐层/分桶，可 overlap）'+(release?'，用完即弃':'，之后常驻'),enter:S=>{S.cur={id,m:'F'};},draw:(p,S)=>agWeight(S,id,p)});segs.push(mini(S=>{S.wFull[id]=1;}));}
+        segs.push({dur:.8,cap:'前向：计算 '+dpLbl(id),enter:S=>{S.cur={id,m:'F'};S.fw[id]=1;},draw:(p,S)=>flowDot(S,id,p,FWD)});
+        if(perlayer&&release)segs.push({dur:.35,cap:'ZeRO-3：释放 '+dpLbl(id)+' 完整权重（只留回 1/N 分片）',enter:S=>{S.wFull[id]=0;}});
+      });
+      segs.push({dur:.7,cap:'得到 loss ✓'+(perlayer&&!release?'（权重全部常驻，反向可直接复用）':''),enter:S=>{S.cur={id:'loss',m:'F'};S.fw.loss=1;},draw:(p,S)=>flowDot(S,'loss',p,FWD)});
+    }else if(phase==='bwd'){
+      DPLAYS.forEach(id=>S.fw[id]=1);S.fw.x=1;S.fw.loss=1;S.gShow=true;
+      if(perlayer&&!release)DPLAYS.forEach(id=>S.wFull[id]=1);
+      segs.push({dur:.7,cap:(perlayer&&!release)?'反向：权重仍完整（前向 gather 后没释放，直接复用，无需再通信）':'反向：从 loss 开始',enter:S=>{S.cur={id:'loss',m:'B'};S.bw.loss=1;}});
+      DPLAYS.slice().reverse().forEach(id=>{
+        if(perlayer&&release){segs.push({dur:.9,cap:'再次 All-Gather '+dpLbl(id)+' 权重（ZeRO-3 反向要重新拿一遍！）',enter:S=>{S.cur={id,m:'B'};},draw:(p,S)=>agWeight(S,id,p)});segs.push(mini(S=>{S.wFull[id]=1;}));}
+        segs.push({dur:.8,cap:'反向：算 '+dpLbl(id)+' 的梯度 ∇（本地完整）',enter:S=>{S.cur={id,m:'B'};S.bw[id]=1;S.grad[id]='full';},draw:(p,S)=>flowDot(S,id,p,BWD)});
+        if(perlayer&&release)segs.push({dur:.3,cap:'释放 '+dpLbl(id)+' 完整权重',enter:S=>{S.wFull[id]=0;}});
+        if(cfg.gradComm==='AR')segs.push({dur:1.0,cap:dpLbl(id)+' 梯度 All-Reduce → 完整平均梯度',enter:S=>{S.cur=null;S.grad[id]='full';},draw:(p,S)=>vComm(S,id,p,GCOL,'AllReduce ∇')});
+        else segs.push({dur:1.0,cap:dpLbl(id)+(cfg.gradResult==='shard'?' 梯度 Reduce-Scatter → 每卡只留 1/N':' 梯度 Reduce-Scatter → 各取回本片（缓冲区仍 2P）'),enter:S=>{S.cur=null;S.grad[id]=cfg.gradResult;},draw:(p,S)=>vComm(S,id,p,GCOL,'ReduceScatter ∇')});
+      });
+    }else{
+      DPLAYS.forEach(id=>{S.fw[id]=1;S.grad[id]=cfg.shard.grad?'shard':'full';});S.gShow=true;
+      if(perlayer&&!release)DPLAYS.forEach(id=>S.wFull[id]=1);
+      if(cfg.opt==='local')segs.push({dur:1.8,cap:'优化器：各卡用完整平均梯度本地更新全部参数（冗余，无通信）',enter:S=>{S.cur=null;},draw:(p,S)=>pulseUpd(S,p)});
+      else if(cfg.opt==='shardUpdate')segs.push({dur:1.8,cap:'各卡只更新自己的 1/N 参数分片（fp32 master）；权重 gather 出来后常驻，下一轮更新前不释放',enter:S=>{S.cur=null;},draw:(p,S)=>pulseUpdShard(S,p)});
+      else segs.push({dur:1.8,cap:'各卡更新自己的 1/N 参数分片（保持分片，下轮前向逐层 All-Gather）',enter:S=>{S.cur=null;},draw:(p,S)=>pulseUpdShard(S,p)});
+    }
+    return {S,scene:sceneDP,segs};
+  }
+
+  /* ---- TP / SP (SP = TP，边界算子换成 All-Gather / Reduce-Scatter) ---- */
+  const TPB=[{id:'x',x:22,w:44,label:'X'},{id:'f',x:74,w:56,comm:1},{id:'A',x:140,w:126,label:'Col-Linear A',sh:'h×2h',tag:'列切'},{id:'gelu',x:276,w:50,label:'GeLU'},{id:'B',x:336,w:126,label:'Row-Linear B',sh:'2h×h',tag:'行切'},{id:'g',x:472,w:56,comm:1},{id:'y',x:534,w:44,label:'Y'}];
+  function tpFlowY(Lg){return Lg.y+52;}
+  function tpRole(id,mode,sp){const bwd=mode==='B';if(!sp)return id==='f'?(bwd?'AR':'copy'):(bwd?'copy':'AR');return id==='f'?(bwd?'RS':'AG'):(bwd?'AG':'RS');}
+  function tpDrawBlock(S,n,b,Lg){const by=Lg.y+22,bh=Lg.h-30,bx=b.x,bw=b.w;let stroke=LINE,sw=1.5;
+    if(S.done[b.id])stroke=S.mode==='B'?BWD:FWD;if(S.cur&&S.cur.id===b.id){stroke=S.cur.m==='B'?BWD:FWD;sw=3;}
+    let s=R(bx,by,bw,bh,8,'#111a33',stroke,sw);s+=T(bx+bw/2,by+14,b.label,{s:11,m:1});
+    if(b.id==='A'||b.id==='B'){const wx=bx+12,wy=by+44,ww=bw-24,wh=22;s+=R(wx,wy,ww,wh,4,RC[n]);s+=T(wx+ww/2,wy+wh/2+4,b.id+(n===0?'₀':'₁'),{s:11,m:1,w:700,f:'#06101f'});if(b.tag)s+=T(bx+bw/2,by+bh-8,b.tag+' '+(b.sh||''),{s:9,m:1,f:b.id==='A'?WCOL:ACTC});}
+    else if(S.sp&&(b.id==='x'||b.id==='y'))s+=T(bx+bw/2,by+bh-8,'s/N',{s:9,m:1,f:ACTC});
+    return s;}
+  function tpCommBar(S,b,Lg){const x=b.x,w=b.w,y0=Lg[0].y+22,yb=Lg[1].y+22+(Lg[1].h-30);const G=dpGapY();const role=tpRole(b.id,S.mode,S.sp);const active=S.cur&&S.cur.id===b.id;const isComm=role!=='copy';const col=role==='AG'?COMM:role==='copy'?LINE:GCOL;
+    let s=R(x,y0,w,yb-y0,8,'#111a33',(active||isComm)?col:LINE,active?3:1.4);
+    const lab=role==='AR'?['All','Reduce']:role==='AG'?['All','Gather']:role==='RS'?['Reduce','Scatter']:['copy','无通信'];
+    s+=T(x+w/2,G.gc-3,lab[0],{s:10,m:1,f:isComm?col:MUT});s+=T(x+w/2,G.gc+12,lab[1],{s:9,m:1,f:isComm?col:MUT});
+    s+=T(x+w/2,y0-6,b.id,{s:10,m:1,f:MUT});return s;}
+  function sceneTP(S){const Lg=lanesG(2);let s='';
+    s+=R(712,48,230,308,10,'#0e1730',LINE,1.5);
+    if(S.sp){s+=T(827,70,'SP = TP + 边界换算子',{s:12,m:1,f:'#cfd8ee'});
+      s+=T(724,102,'区外 LN/Dropout 沿序列切',{s:10.5,a:'start',f:ACTC});s+=T(724,118,'每卡只持 1/N 序列',{s:10,a:'start',f:MUT});
+      s+=T(724,148,'入边界 f：All-Gather 补全',{s:10.5,a:'start',f:COMM});s+=T(724,170,'出边界 g：Reduce-Scatter',{s:10.5,a:'start',f:GCOL});
+      s+=T(724,200,'AG + RS = AllReduce',{s:11,a:'start',f:'#e8edf7'});s+=T(724,216,'→ 通信量与纯 TP 相同',{s:10,a:'start',f:MUT});
+      s+=T(827,256,'额外省 LN/Dropout 激活',{s:11,m:1,f:'#cfd8ee'});
+    }else{s+=T(827,70,'一层 MLP = 两次矩阵乘',{s:12,m:1,f:'#cfd8ee'});
+      s+=T(724,102,'Column-Linear A：按列切',{s:10.5,a:'start',f:WCOL});s+=T(724,118,'→ 列分片，无通信',{s:10,a:'start',f:MUT});
+      s+=T(724,148,'Row-Linear B：按行切',{s:10.5,a:'start',f:ACTC});s+=T(724,164,'→ 部分和 partial',{s:10,a:'start',f:MUT});
+      s+=T(724,194,'前向 AllReduce 在 g（右）',{s:10,a:'start',f:GCOL});s+=T(724,212,'反向 AllReduce 在 f（左）',{s:10,a:'start',f:BWD});
+      s+=T(827,252,'每层 fwd/bwd 各 1 次',{s:10.5,m:1,f:'#cfd8ee'});
+    }
+    for(let n=0;n<2;n++){const fy=tpFlowY(Lg[n]);s+=T(22,Lg[n].y+12,'GPU'+n,{s:10,a:'start',f:MUT,m:1});
+      s+=LN(64,fy,534,fy,LINE,1.2,'3 4');
+      S.blocks.forEach(b=>{if(!b.comm)s+=tpDrawBlock(S,n,b,Lg[n]);});}
+    S.blocks.forEach(b=>{if(b.comm)s+=tpCommBar(S,b,Lg);});
+    return s;}
+  function tpDot(S,id,p,c,rev){const b=S.blocks.find(x=>x.id===id);if(!b)return'';const Lg=lanesG(2);let s='';const q=rev?1-p:p;for(let n=0;n<2;n++)s+=DOT(b.x+b.w*q,tpFlowY(Lg[n]),c);return s;}
+  function tpCommAnim(S,id,p){const b=S.blocks.find(x=>x.id===id);const Lg=lanesG(2);const xc=b.x+b.w/2;const G=dpGapY();const role=tpRole(id,S.mode,S.sp);const fy0=tpFlowY(Lg[0]),fy1=tpFlowY(Lg[1]);let s=LN(xc,fy0,xc,fy1,role==='AG'?COMM:GCOL,1.6,'5 4');
+    if(role==='AG'){s+=DOT(xc,G.gc+(fy0-G.gc)*p,COMM,'S');s+=DOT(xc,G.gc+(fy1-G.gc)*p,COMM,'S');}
+    else{s+=DOT(xc,fy0+(G.gc-fy0)*p,GCOL,'Σ');s+=DOT(xc,fy1+(G.gc-fy1)*p,GCOL,'Σ');}
+    return s;}
+  function tpPulse(S,p){const Lg=lanesG(2);let s='';['A','B'].forEach(id=>{const b=S.blocks.find(x=>x.id===id);for(let n=0;n<2;n++){const cx=b.x+b.w/2,cy=Lg[n].y+22+55;s+=`<circle cx="${cx}" cy="${cy}" r="${7+3*Math.abs(Math.sin(p*Math.PI*3))}" fill="none" stroke="${OPT}" stroke-width="2"/>`;}});return s;}
+  function buildTP(phase,sp){const S={blocks:TPB,done:{},cur:null,mode:phase==='bwd'?'B':'F',sp:!!sp};const segs=[];
+    const flow=(id,cap,rev)=>segs.push({dur:.75,cap,enter:S=>{S.cur={id,m:S.mode};S.done[id]=1;},draw:(p,S)=>tpDot(S,id,p,S.mode==='B'?BWD:FWD,rev)});
+    const comm=(id,cap)=>segs.push({dur:1.1,cap,enter:S=>{S.cur={id,m:S.mode};S.done[id]=1;},draw:(p,S)=>tpCommAnim(S,id,p)});
+    if(phase==='fwd'){
+      flow('x',sp?'X 沿序列切：每卡持 seq 的 1/N（SP 区：LN/Dropout）':'X 复制到 TP 组每卡（相同输入）');
+      if(sp)comm('f','① f：All-Gather → 补全完整序列，进入 TP 区'); else flow('f','f = copy（前向无通信）');
+      flow('A','Column-Linear A：按列切 → 各算列分片（无通信）');
+      flow('gelu','GeLU 逐元素（无通信）');
+      flow('B','Row-Linear B：按行切 → 各得部分和 partial');
+      comm('g',sp?'② g：Reduce-Scatter → 规约并切回 seq/N（出 TP 区）':'g：All-Reduce 合并部分和 → 完整 Y（整层仅 1 次）');
+      flow('y',sp?'Y（seq/N，回到 SP 区）✓':'Y（完整）✓');
+    }else if(phase==='bwd'){['x','f','A','gelu','B','g','y'].forEach(id=>S.done[id]=1);
+      flow('y','反向：从 Y 的梯度开始',true);
+      if(sp)comm('g','反向 g：All-Gather 补全序列'); else flow('g','g 反向 = identity（无通信）',true);
+      flow('B','Row-Linear B 反向：算 dX 部分和 + 本地 wgrad',true);
+      flow('gelu','GeLU 反向',true);
+      flow('A','Column-Linear A 反向（本地 wgrad）',true);
+      comm('f',sp?'反向 f：Reduce-Scatter → 回到 seq/N':'f 反向：All-Reduce 求完整 dX（反向唯一 1 次通信，在输入侧！）');
+      flow('x','dX 完成 ✓',true);
+    }else{['x','f','A','gelu','B','g','y'].forEach(id=>S.done[id]=1);
+      segs.push({dur:1.8,cap:'优化器：各卡只更新自己的权重分片 A₀/B₀…（参数天然不冗余，无通信）',enter:S=>{S.cur=null;},draw:(p,S)=>tpPulse(S,p)});}
+    return {S,scene:sceneTP,segs};}
+
+  /* ---- CP: Ring + Ulysses ---- */
+  function cpBoxes(){const N=4,w=176,gap=24,st=(960-(N*w+(N-1)*gap))/2;const a=[];for(let n=0;n<N;n++){const x=st+n*(w+gap);a.push({x,w,cx:x+w/2});}return a;}
+  const CPY=84,CPH=140;
+  function sceneCPring(S){const B=cpBoxes();const y=CPY,h=CPH;let s=T(480,42,'序列切 4 段 · 每卡固定持 Q 段，KV 沿环流转（Ring Attention）',{s:12,m:1,f:MUT});
+    for(let n=0;n<4;n++){const b=B[n];const kv=((n-S.round)%4+4)%4;
+      s+=R(b.x,y,b.w,h,10,'#111a33',S.computing?FWD:LINE,S.computing?2.5:1.5);
+      s+=T(b.cx,y-8,'GPU'+n,{s:11,m:1,f:MUT});
+      s+=chip2(b.cx-44,y+24,'Q'+n,ACTC);s+=T(b.cx,y+38,'×',{s:13,m:1,f:MUT});s+=chip2(b.cx+44,y+24,'KV'+kv,RC[kv]);
+      s+=T(b.cx,y+70,'O'+n+' attention 累加  '+Math.round((S.oFrac[n]||0)*100)+'%',{s:10,f:MUT});
+      s+=R(b.x+18,y+80,b.w-36,16,4,'none',FWD,1,'3 3');s+=R(b.x+18,y+80,(b.w-36)*(S.oFrac[n]||0),16,4,FWD);
+      if(S.oFrac[n]>=1)s+=T(b.cx,y+118,'✓ 见过全部 KV',{s:10,m:1,f:FWD});}
+    return s;}
+  function cpRingPass(p){const B=cpBoxes();const midY=CPY+CPH/2;const by=CPY+CPH;let s=T(480,by+52,'KV 沿环 P2P 传给下一张卡（GPU n → GPU n+1）',{s:11,m:1,f:ACTC});
+    for(let n=0;n<3;n++){const x1=B[n].x+B[n].w,x2=B[n+1].x;s+=LN(x1,midY,x2,midY,ACTC,1.6,'5 4');s+=DOT(x1+(x2-x1)*p,midY,ACTC,'KV');}
+    const x3=B[3].cx,x0=B[0].cx,y0=by,y1=by+30;const pts=[[x3,y0],[x3,y1],[x0,y1],[x0,y0]];s+=`<path d="M${x3},${y0} L${x3},${y1} L${x0},${y1} L${x0},${y0}" fill="none" stroke="${ACTC}" stroke-width="1.6" stroke-dasharray="5 4"/>`;const pt=ptOn(pts,p);s+=DOT(pt[0],pt[1],ACTC,'KV');
+    return s;}
+  function cpUlyBox(gi,S){const gx=[150,480,810][gi];const ys=[72,140,208,276];const on=gi===1;let s='';
+    s+=T(gx,54,['① 序列并行 (SP)','② 头并行 (A2A 后)','③ 序列并行 (SP)'][gi],{s:12,m:1,f:on?FWD:MUT});
+    for(let n=0;n<4;n++){const bx=gx-74,by=ys[n];const hot=(on&&S.stage>=2&&S.stage<3);s+=R(bx,by,148,52,8,'#111a33',hot?FWD:LINE,hot?2.5:1.5);s+=T(gx,by+19,'GPU'+n,{s:10,m:1,f:MUT});s+=T(gx,by+38,on?('全 seq · head'+n):('seq'+n+' · 全 head'),{s:10,m:1,f:on?ACTC:'#cfd8ee'});}
+    return s;}
+  function cpBand(x,done,lab){return R(x-24,66,48,262,8,done?'rgba(56,225,196,.14)':'rgba(255,255,255,.03)',COMM,1.5,'5 4')+T(x,56,'A2A',{s:10,m:1,f:COMM})+T(x,340,lab,{s:9,m:1,f:MUT});}
+  function ulyFlow(x,p){const ys=[72,140,208,276];let s='';for(let src=0;src<4;src++)for(let dst=0;dst<4;dst++){if(src===dst)continue;const y1=ys[src]+26,y2=ys[dst]+26;s+=`<line x1="${x-16}" y1="${y1}" x2="${x+16}" y2="${y2}" stroke="${RC[src]}" stroke-width="1" stroke-dasharray="3 3" opacity="0.2"/>`;s+=`<circle cx="${x-16+(32)*p}" cy="${y1+(y2-y1)*p}" r="4.5" fill="${RC[src]}"/>`;}return s;}
+  function sceneCPuly(S){let s=T(480,30,'Ulysses：用 2 次 All-to-All 在 序列并行 ↔ 头并行 之间换轴',{s:12,m:1,f:MUT});
+    s+=cpUlyBox(0,S)+cpUlyBox(1,S)+cpUlyBox(2,S);s+=cpBand(330,S.stage>=1,'seq→head')+cpBand(660,S.stage>=3,'head→seq');
+    if(S.stage>=2&&S.stage<3)s+=T(480,352,'中间：每卡本地算"完整 attention"（有全序列、部分 head，无需迭代）',{s:11,m:1,f:FWD});
+    return s;}
+  function buildCP(phase){
+    if(phase==='uly'){const S={stage:0};const segs=[
+      {dur:1.1,cap:'起点：序列并行 —— 每卡持 seq 的 1/4，但有全部 head',enter:S=>{S.stage=0;}},
+      {dur:1.3,cap:'All-to-All #1：seq 并行 → 头并行（每卡换成 全序列 + 部分 head）',enter:S=>{S.stage=1;},draw:p=>ulyFlow(330,p)},
+      {dur:1.4,cap:'每卡本地算"完整 attention"（拥有全序列，无需像 Ring 那样迭代）',enter:S=>{S.stage=2;}},
+      {dur:1.3,cap:'All-to-All #2：头并行 → seq 并行（换回原来的切法）',enter:S=>{S.stage=3;},draw:p=>ulyFlow(660,p)},
+      {dur:.9,cap:'✓ Ulysses：仅 2 次 All-to-All（对比 Ring 的 N-1 步 P2P；但受 head 数限制）',enter:S=>{S.stage=4;}}];
+      return {S,scene:sceneCPuly,segs};}
+    const S={round:0,oFrac:[0,0,0,0],computing:false};const segs=[];
+    for(let r=0;r<4;r++){segs.push({dur:.8,cap:'Ring 第 '+(r+1)+'/4 步：各卡用当前 KV 算局部 attention，累加到 O',enter:S=>{S.computing=true;},draw:(p,S)=>{for(let n=0;n<4;n++)S.oFrac[n]=(r+p)/4;return '';}});
+      if(r<3)segs.push({dur:.9,cap:'把 KV 传给环上的下一张卡（P2P Send/Recv，可与下一步计算重叠）',enter:S=>{S.round=r+1;S.computing=false;},draw:p=>cpRingPass(p)});}
+    segs.push({dur:.7,cap:'✓ 每卡的 Q 都见过全部 KV → attention 完成',enter:S=>{S.computing=false;for(let n=0;n<4;n++)S.oFrac[n]=1;}});
+    return {S,scene:sceneCPring,segs};}
+
+  /* ---- EP ---- */
+  function buildEP(){const S={cur:null,comm:null,dir:'D',done:{},B:[{id:'a1',x:24,w:88,l:'Attn'},{id:'c1',x:118,w:96,comm:1},{id:'e1',x:220,w:88,l:'Expert'},{id:'c2',x:314,w:96,comm:1},{id:'a2',x:416,w:88,l:'Attn'},{id:'c3',x:510,w:96,comm:1},{id:'e2',x:612,w:88,l:'Expert'},{id:'c4',x:706,w:96,comm:1}]};
+    const segs=[];const step=(id,cap)=>segs.push({dur:.8,cap,enter:S=>{S.cur=id;S.comm=null;S.done[id]=1;},draw:(p,S)=>epDot(S,id,p)});
+    const comm=(id,dir,cap)=>segs.push({dur:1.2,cap,enter:S=>{S.cur=null;S.comm=id;S.dir=dir;S.done[id]=1;},draw:(p,S)=>epA2A(S,id,p)});
+    step('a1','MoE 层1：先算 Attention（token 都在自己卡上）');
+    comm('c1','D','层间通信①：All-to-All <b>Dispatch</b> — 每卡把 token 按 router 拆成 N 份，分发到各专家所在卡');
+    step('e1','Expert 计算（每卡只有一部分专家 E_n）');
+    comm('c2','C','层间通信②：All-to-All <b>Combine</b> — 结果按来源送回原 token 的卡');
+    step('a2','MoE 层2：又是 Attention（token 已回到本卡）');
+    comm('c3','D','层间通信③：每个 MoE 层，Expert 前都要再 All-to-All dispatch');
+    step('e2','Expert 计算');
+    comm('c4','C','层间通信④：All-to-All Combine → 进入下一层');
+    return {S,scene:sceneEP,segs};}
+  function sceneEP(S){const Lg=lanesG(4);const bBot=Lg[3].y+Lg[3].h;let s=T(480,30,'MoE：通信都在层间 —— 每个 Expert 前 All-to-All 分发、后 All-to-All 收回',{s:12,m:1,f:MUT});
+    for(let n=0;n<4;n++){s+=T(2,Lg[n].cy+4,'G'+n,{s:10,a:'start',f:MUT,m:1});
+      S.B.forEach(b=>{if(b.comm)return;const by=Lg[n].y+6,bh=Lg[n].h-12,active=S.cur===b.id,isE=b.id[0]==='e';
+        s+=R(b.x,by,b.w,bh,6,S.done[b.id]?(isE?'rgba(255,180,84,.15)':'rgba(70,209,127,.12)'):'#111a33',active?FWD:LINE,active?2.5:1.2);
+        s+=T(b.x+b.w/2,Lg[n].cy+4,b.l+(isE?(' E'+n):''),{s:9.5,m:1,f:'#cfd8ee'});});}
+    S.B.forEach(b=>{if(!b.comm)return;const active=S.comm===b.id;const disp=(b.id==='c1'||b.id==='c3');s+=R(b.x,Lg[0].y,b.w,bBot-Lg[0].y,6,active?'rgba(56,225,196,.10)':'rgba(255,255,255,.03)',active?COMM:LINE,active?1.8:1,'5 4');s+=T(b.x+b.w/2,bBot+14,'A2A '+(disp?'Dispatch':'Combine'),{s:8.5,m:1,f:active?COMM:MUT});});
+    return s;}
+  function epDot(S,id,p){const b=S.B.find(x=>x.id===id);const Lg=lanesG(4);let s='';for(let n=0;n<4;n++)s+=DOT(b.x+b.w*p,Lg[n].cy,FWD);return s;}
+  function epA2A(S,id,p){const b=S.B.find(x=>x.id===id);const Lg=lanesG(4);const xl=b.x+8,xr=b.x+b.w-8;let s='';
+    for(let src=0;src<4;src++)for(let dst=0;dst<4;dst++){if(src===dst)continue;const y1=Lg[src].cy,y2=Lg[dst].cy;
+      s+=`<line x1="${xl}" y1="${y1}" x2="${xr}" y2="${y2}" stroke="${RC[src]}" stroke-width="1" stroke-dasharray="3 3" opacity="0.22"/>`;
+      const px=xl+(xr-xl)*p,py=y1+(y2-y1)*p;s+=`<circle cx="${px}" cy="${py}" r="4.5" fill="${RC[src]}"/>`;}
+    for(let n=0;n<4;n++)s+=`<circle cx="${xl+(xr-xl)*p}" cy="${Lg[n].cy}" r="4.5" fill="${RC[n]}" opacity="0.5"/>`;
+    return s;}
+
+  /* ---- PP: animated 1F1B Gantt ---- */
+  function scenePP(S){const p=S.p,ms=S.maxSlot,padL=70,xR=902,top=68,bot=312,rowH=(bot-top)/p,cw=(xR-padL)/ms,t=S.time;
+    const X=sl=>padL+sl*cw,midY=r=>top+r*rowH+rowH/2;
+    let s=T(480,28,'1F1B 流水线时序 · 横轴=时间，每行=一张卡（stage）',{s:12,m:1,f:MUT});
+    for(let r=0;r<p;r++){const ry=top+r*rowH;s+=R(padL,ry+4,xR-padL,rowH-8,4,'rgba(255,255,255,.02)',LINE,1);s+=T(padL-10,midY(r)+4,'D'+r,{s:11,a:'end',m:1,f:MUT});}
+    const smap={};S.cells.forEach(c=>smap[c.stage+c.type+c.mb]=c.slot);
+    S.cells.forEach(c=>{if(c.slot>=t)return;const col=c.type==='F'?ACTC:BWD;
+      if(c.type==='F'&&c.stage<p-1){const ch=smap[(c.stage+1)+'F'+c.mb];if(ch!==undefined&&ch<t)s+=LN(X(c.slot+1),midY(c.stage)+7,X(ch),midY(c.stage+1)-7,col,1,'3 3');}
+      if(c.type==='B'&&c.stage>0){const ch=smap[(c.stage-1)+'B'+c.mb];if(ch!==undefined&&ch<t)s+=LN(X(c.slot+1),midY(c.stage)-7,X(ch),midY(c.stage-1)+7,col,1,'3 3');}});
+    S.cells.forEach(c=>{if(c.slot>=t)return;const cx=X(c.slot),cy=top+c.stage*rowH+5,cwi=Math.max(0,cw*Math.min(1,t-c.slot)-2),chh=rowH-10,col=CF[c.mb%CF.length];
+      if(c.type==='F')s+=R(cx+1,cy,cwi,chh,3,col);else s+=R(cx+1,cy,cwi,chh,3,'#0e1730',col,1.8);
+      if(t-c.slot>0.45&&cwi>14)s+=T(cx+cw/2,cy+chh/2+4,c.type+(c.mb+1),{s:9.5,m:1,w:700,f:c.type==='F'?'#06101f':col});});
+    const cx=X(Math.min(t,ms));s+=LN(cx,top,cx,bot,'#e8edf7',1.2,'2 3');
+    s+=T(padL,bot+24,'■ 实心=前向 F',{s:10,a:'start',f:FWD});s+=T(padL+120,bot+24,'□ 空心=反向 B',{s:10,a:'start',f:BWD});
+    s+=T(padL+245,bot+24,'虚线=stage 间 Send/Recv 激活/梯度',{s:10,a:'start',f:MUT});s+=T(xR,bot+24,'颜色=microbatch 编号',{s:10,a:'end',f:MUT});
+    return s;}
+  function buildPP(){const p=4,m=6;const {cells,maxSlot}=schedPipe(p,m,'1f1b');const S={p,m,maxSlot,cells,time:0};
+    const warm=p,cool=maxSlot-(p-1);
+    const seg=(dur,cap,from,to)=>({dur,cap,enter:S=>{},draw:(pp,S)=>{S.time=from+(to-from)*pp;return'';}});
+    const segs=[seg(1.7,'预热：前向从上游往下游填充，下游卡还在空等 → 头部气泡',0,warm),
+      seg(2.6,'稳态 1F1B：每卡交替「1 前向 → 1 反向」，多个 microbatch 同时在不同 stage 上并行；反向尽早做完 → 及时释放激活，峰值显存 O(p)',warm,cool),
+      seg(1.7,'排空：前向已做完，只剩反向清空流水线 → 尾部气泡',cool,maxSlot),
+      {dur:.9,cap:'✓ 完成一个 iteration。气泡率≈(p−1)/m，m 越大越划算（GPipe 峰值激活 O(m)，1F1B 降到 O(p)）',enter:S=>{S.time=S.maxSlot;},draw:(pp,S)=>{S.time=S.maxSlot;return'';}}];
+    return {S,scene:scenePP,segs};}
+
+  /* ---- registry ---- */
+  const sameP=[{id:'fwd',label:'① 前向·loss'},{id:'bwd',label:'② 反向'},{id:'opt',label:'③ 优化器'}];
+  const SD={
+    dp:{phases:sameP,desc:'每卡<b>完整模型</b>，切 batch 独立训练。',note:'通信：每层反向后梯度 All-Reduce（=2P）；可与反向重叠。优化器本地更新，无参数通信。',build:ph=>buildDP({wIdle:1,gIdle:1,shard:{param:0,grad:0,optim:0},gradComm:'AR',gradResult:'full',wGather:'none',opt:'local'},ph)},
+    z1:{phases:sameP,desc:'<b>优化器状态</b>分片(1/N)。权重逐层/分桶 All-Gather（可 overlap 进前向），但拼出后<b>常驻不释放</b> → 反向直接复用、无需再 gather。= Megatron <code>--use-distributed-optimizer</code>。',note:'权重 All-Gather（逐层，常驻）+ 梯度 Reduce-Scatter（AG+RS=2P，与 DP 同）；优化器只更新 1/N 分片。',build:ph=>buildDP({wIdle:0.5,gIdle:1,shard:{param:0,grad:0,optim:1},gradComm:'RS',gradResult:'full',wGather:'perlayer',release:false,opt:'shardUpdate'},ph)},
+    z2:{phases:sameP,desc:'在 ZeRO-1 基础上再<b>分片梯度</b>：反向按桶 Reduce-Scatter，每卡只留 1/N 梯度。权重同样逐层 gather 后常驻。',note:'通信同 ZeRO-1（权重 AG + 梯度 RS = 2P）；额外省下梯度显存。',build:ph=>buildDP({wIdle:0.5,gIdle:0.5,shard:{param:0,grad:1,optim:1},gradComm:'RS',gradResult:'shard',wGather:'perlayer',release:false,opt:'shardUpdate'},ph)},
+    z3:{phases:sameP,desc:'连<b>参数</b>也分片：同样逐层 All-Gather，但<b>用完立即释放</b> → 反向要再 gather 一次（与 ZeRO-1/2 的唯一区别就在"释不释放"）。',note:'每层 fwd/bwd 各 All-Gather 权重 + 梯度 Reduce-Scatter；通信≈3P(1.5×DP)，显存≈16P/N。',build:ph=>buildDP({wIdle:0.5,gIdle:0.5,shard:{param:1,grad:1,optim:1},gradComm:'RS',gradResult:'shard',wGather:'perlayer',release:true,opt:'shardkeep'},ph)},
+    tp:{phases:[{id:'fwd',label:'① 前向'},{id:'bwd',label:'② 反向'},{id:'opt',label:'③ 优化器'}],desc:'Column-Linear + Row-Linear：列切→行切。前向 g 处一次 All-Reduce；反向 f 处（输入侧）一次 All-Reduce。',note:'每层 fwd/bwd 各 1 次 All-Reduce（重）→ 只放机内 NVLink；权重/激活 /TP。',build:ph=>buildTP(ph,false)},
+    cp:{phases:[{id:'ring',label:'Ring Attention'},{id:'uly',label:'Ulysses (A2A)'}],desc:'Attention 沿序列切。Ring：P2P 环传 KV；Ulysses：2 次 All-to-All 换成 head 并行本地算。',note:'Ring：N-1 步 P2P、可与计算重叠；Ulysses：仅 2 次 All-to-All、延迟低但受 head 数限制。',build:ph=>buildCP(ph)},
+    ep:{phases:[{id:'m',label:'MoE 数据流'}],desc:'专家分卡；每个 MoE 层在 Attention 后 All-to-All 送 token 到目标专家，算完送回。',note:'通信在层间：每次 Expert 计算前后各一次 All-to-All。',build:ph=>buildEP()},
+    pp:{phases:[{id:'m',label:'数据流'}],desc:'按层切 stage；激活/梯度 Send/Recv 在相邻 stage 流动。',note:'通信最轻（只传边界激活）→ 适合跨机；有气泡。',build:ph=>buildPP()},
+    sp:{phases:[{id:'fwd',label:'① 前向'},{id:'bwd',label:'② 反向'},{id:'opt',label:'③ 优化器'}],desc:'就是 TP，把两个边界算子换掉：区外 LN/Dropout 沿序列切；入边界 f 用 All-Gather 补全序列，出边界 g 用 Reduce-Scatter 切回。',note:'AG+RS=AllReduce → 通信量与纯 TP 相同，额外省下 LN/Dropout 的激活显存。',build:ph=>buildTP(ph,true)}
+  };
+  function runStrat(id,phaseId){plStop();const def=SD[id];if(!def)return;PL.strat=id;
+    const phases=def.phases||[{id:'m',label:'演示'}];PL.phase=phaseId||phases[0].id;
+    const bar=document.getElementById('para-phases');
+    if(phases.length>1){bar.style.display='flex';bar.innerHTML=phases.map(p=>`<div class="pbtn${p.id===PL.phase?' active':''}" data-phase="${p.id}">${p.label}</div>`).join('');bar.querySelectorAll('[data-phase]').forEach(b=>b.onclick=()=>runStrat(id,b.dataset.phase));}
+    else{bar.style.display='none';bar.innerHTML='';}
+    const r=def.build(PL.phase);PL.S=r.S;PL.scene=r.scene;PL.segs=r.segs;PL.lastCap='';
+    document.getElementById('para-desc').innerHTML=r.desc||def.desc||'';
+    document.getElementById('para-note').innerHTML=r.note||def.note||'';
+    document.querySelectorAll('[data-strat]').forEach(b=>b.classList.toggle('active',b.dataset.strat===id));
+    document.getElementById('para-status').textContent='▶ 演示中…';plStart();}
+  function initPara(){PL.svg=document.getElementById('para-svg');document.querySelectorAll('[data-strat]').forEach(b=>b.onclick=()=>runStrat(b.dataset.strat));document.getElementById('para-replay').onclick=()=>{if(PL.strat)runStrat(PL.strat,PL.phase);};setTimeout(()=>runStrat('dp'),350);}
+
+  function buildDynamic(i){
+    const sl=slides[i];
+    if(sl.querySelector('#gpipe-svg'))buildGPipe();
+    if(sl.querySelector('#onefone-svg'))build1F1B();
+    if(sl.querySelector('#prim-svg'))initPrimitives();
+    if(sl.querySelector('#para-svg'))initPara();
+  }
+
+  show(0); buildDynamic(0);
+})();
+</script>
+</body>
+</html>
