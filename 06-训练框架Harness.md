@@ -157,7 +157,79 @@ MODEL_PARALLEL_ARGS=(
 
 ---
 
-## 7. 依赖关系小结
+## 7. 性能剖析（Profiling）：PyTorch Profiler / Nsys / 显存历史
+
+训练主循环 `train()` 内置了三套开箱即用的性能剖析工具，都由 `--profile` 系列命令行参数驱动，代码集中在 `megatron/training/training.py` 的 `train()` 里（参数定义在 `megatron/training/config/common_config.py` 的 `ProfilingConfig`）。核心机制：**只在 `[profile_step_start, profile_step_end)` 这几个稳定迭代步上采集**（避开前几步的编译/warmup 抖动），并可只采集指定 rank，避免整集群一起 dump。
+
+### 7.1 命令行参数一览
+
+| 参数 | 默认 | 作用 |
+|------|:--:|------|
+| `--profile` | 关 | 总开关。**不加它，下面所有参数都不生效**。单独用 = Nsys 模式（配合外层 `nsys` 命令） |
+| `--profile-step-start N` | 10 | 从第 N 个全局 step 开始采集 |
+| `--profile-step-end N` | 12 | 到第 N 个 step 停止（采集区间 `[start, end)`，示例默认只抓 10、11 两步） |
+| `--profile-ranks r1 r2 …` | 空=所有 rank | 只在这些**全局 rank** 上采集（大集群通常只留 `0`） |
+| `--use-pytorch-profiler` | 关 | 用内置 **torch.profiler**（产出 Chrome trace，可在 TensorBoard/Perfetto 看）；不加则走 **Nsys** 路径 |
+| `--pytorch-profiler-collect-shapes` | 关 | torch profiler 记录张量形状 |
+| `--pytorch-profiler-collect-callstack` | 关 | torch profiler 记录 Python 调用栈（`with_stack`） |
+| `--pytorch-profiler-collect-chakra` | 关 | 额外导出 Chakra 执行轨迹（`ExecutionTraceObserver`） |
+| `--nvtx-ranges` | 关 | 插入 NVTX 标注（给 Nsys 分类用，见 `configure_nvtx_profiling`） |
+| `--record-shapes` | 关 | Nsys 的 `emit_nvtx(record_shapes=…)` 记录形状 |
+| `--record-memory-history` | 关 | 记录 **CUDA 显存分配历史**，末 rank dump `.pickle` |
+| `--memory-snapshot-path` | `snapshot.pickle` | 显存历史快照落盘路径 |
+
+> 参数名由 `ProfilingConfig` 的字段自动生成（下划线→短横线）；唯一特例是 `--profile`（字段 `use_nsys_profiler`，显式 `dest=profile`）。
+
+### 7.2 三种用法
+
+**① PyTorch Profiler（推荐，看 TensorBoard/Perfetto）**
+
+```bash
+# 训练命令里追加（需同时设置 --tensorboard-dir）
+    --profile \
+    --use-pytorch-profiler \
+    --profile-step-start 10 \
+    --profile-step-end 12 \
+    --profile-ranks 0 \
+    --tensorboard-dir /path/to/tb
+```
+
+- Chrome trace 落盘到 **`{tensorboard_dir}/../torch_profile/rank-<r>.json.gz`**（`trace_handler` 里 `export_chrome_trace`）。
+- 内部用 `torch.profiler.schedule(wait=start-1, warmup=1, active=end-start, repeat=1)`，每步调用 `prof.step()` 推进，到 `profile_step_end` 调 `prof.stop()`。
+- 加 `--pytorch-profiler-collect-chakra` 时，Chakra trace 落到 `{tensorboard_dir}/../chakra/rank-<r>.json.gz`。
+- **前置条件**：必须设置 `--tensorboard-dir`（输出路径以它为基准）。
+
+**② Nsys（系统级时间线，看 kernel/NCCL）**
+
+不加 `--use-pytorch-profiler`，只用 `--profile`（可叠加 `--nvtx-ranges`/`--record-shapes`）。此时代码在 `profile_step_start` 调 `cudaProfilerStart()` + `emit_nvtx()`，在 `profile_step_end` 调 `cudaProfilerStop()`。需要用外层 `nsys` 命令包住训练进程，并把捕获区间对齐到 `cudaProfilerApi`：
+
+```bash
+nsys profile -s none -t nvtx,cuda \
+  -o <输出文件> --force-overwrite true \
+  --capture-range=cudaProfilerApi --capture-range-end=stop \
+  python pretrain_gpt.py ... --profile --nvtx-ranges --profile-step-start 10 --profile-step-end 12 --profile-ranks 0
+```
+
+（该 `nsys` 示例命令即 `ProfilingConfig.use_nsys_profiler` 字段 docstring 给出的官方范例。）
+
+**③ 显存历史（排查 OOM / 碎片）**
+
+```bash
+    --record-memory-history \
+    --memory-snapshot-path /path/to/snapshot.pickle
+```
+
+在末 rank 每 `log_interval` 步 `torch.cuda.memory._snapshot()` dump 一次，用 [PyTorch 显存可视化工具](https://docs.pytorch.org/memory_viz) 打开 `.pickle` 即可看每块显存的分配调用栈——排查激活/碎片（呼应 [02.1 显存账](./02.1-显存、激活值与重计算.md)）非常有用。
+
+### 7.3 仓库内示例
+
+现成的 profiler 用法可直接抄：`examples/llama/train_llama3_8b_h100_fp8.sh`、`examples/megatron_fsdp/train_llama3_8b_fsdp_h100_fp8.sh`、`examples/megatron_fsdp/sbatch_mfsdp_deepseek_v3.sh`（均用 `--profile --profile-step-start/end --profile-ranks 0`）。
+
+> 相关源码：`megatron/training/config/common_config.py`（`ProfilingConfig` 参数）、`megatron/training/training.py`（`train()` 内 torch.profiler 启停、`export_chrome_trace`、显存快照 dump）、`megatron/core/utils.py:configure_nvtx_profiling`（NVTX 开关）。
+
+---
+
+## 8. 依赖关系小结
 
 ```mermaid
 flowchart TD

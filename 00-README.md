@@ -27,7 +27,7 @@
 | 03 | [Transformer 与模型子系统](./03-Transformer与模型子系统.md) | Spec 机制、TransformerBlock/Layer、GPT/Mamba/Hybrid/MoE/多模态 |
 | 04 | [分布式训练与优化器](./04-分布式训练与优化器.md) | DDP / FSDP、梯度桶、DistributedOptimizer、梯度裁剪与缩放 |
 | 05 | [数据集与分词器](./05-数据集与分词器.md) | IndexedDataset、BlendedDataset、GPTDataset、tokenizers |
-| 06 | [训练框架 Harness](./06-训练框架Harness.md) | 入口脚本、`pretrain()`、训练主循环、参数系统、检查点 |
+| 06 | [训练框架 Harness](./06-训练框架Harness.md) | 入口脚本、`pretrain()`、训练主循环、参数系统、检查点、**性能剖析（torch.profiler / Nsys / 显存历史）** |
 | 07 | [推理子系统](./07-推理子系统.md) | 静态/动态引擎、调度器、采样、文本生成服务 |
 | 08 | [检查点与重切分](./08-检查点与重切分.md) | 分布式检查点格式、ShardedTensor、resharding |
 | 09 | [后训练与强化学习](./09-后训练与RL.md) | ModelOpt 量化/蒸馏/剪枝、RL/GRPO 训练 |
