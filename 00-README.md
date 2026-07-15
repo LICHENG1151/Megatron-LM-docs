@@ -14,7 +14,7 @@
 |------|------|----------|
 | 00 | 本 README | 文档导航与全局速览 |
 | 01 | [框架透视图解](./01-框架透视图解.md) | 双层架构、目录结构、分层依赖关系总图、执行链路鸟瞰 |
-| 02 | [并行化子系统](./02-并行化子系统.md) | 导览：五维并行总览 + 子文档索引（下列 02.0–02.8） |
+| 02 | [并行化子系统](./02-并行化子系统.md) | 导览：五维并行总览 + 子文档索引（下列 02.0–02.9） |
 | 02.0 | [Transformer 与 MoE 结构基础](./02.0-Transformer与MoE结构基础.md) | 〔铺垫〕单卡逻辑视角的 MoE 层、MHA/MLA 分轨、三段式与下刀点地图 |
 | 02.1 | [显存、激活值与重计算](./02.1-显存、激活值与重计算.md) | 〔铺垫〕为什么单卡装不下：16P 显存账、激活值、重计算、FlashAttention 类比 |
 | 02.1.1 | [FlashAttention](./02.1.1-FlashAttention.md) | 〔铺垫〕专题：online-softmax 分块 + 反向重算，激活 O(s²)→O(s)；TE 后端与 `--attention-backend` |
@@ -24,8 +24,9 @@
 | 02.4 | [并行组构建与通信详解](./02.4-并行组构建与通信详解.md) | 〔实现〕`parallel_state` 分组算法、建组三步、DDP 分桶 + 分布式优化器 ZeRO |
 | 02.5 | [张量并行实现详解](./02.5-张量并行实现详解.md) | 〔实现〕列/行并行、`f`/`g` 对偶算子、序列并行 |
 | 02.6 | [流水线并行与 1F1B 调度](./02.6-流水线并行与1F1B调度.md) | 〔实现〕气泡、microbatch、1F1B 三阶段、交错式流水线 |
-| 02.7 | [上下文并行与专家并行](./02.7-上下文并行与专家并行.md) | 〔实现〕CP（Ring/Ulysses、Zigzag 负载均衡）、EP（两次 All-to-All）、通信特征总表 |
-| 02.8 | [进阶专题](./02.8-进阶专题.md) | 〔进阶〕Muon 分布式化、长序列工具箱（Cut-CE/2D CP）、FSDP vs TP+PP 选型 |
+| 02.7 | [上下文并行](./02.7-上下文并行.md) | 〔实现〕CP 切序列（Ring/Ulysses、Zigzag 因果负载均衡） |
+| 02.8 | [专家并行](./02.8-专家并行.md) | 〔实现〕EP 切专家（两次 All-to-All）、MoE 路由/负载均衡数学、五种并行通信特征总表 |
+| 02.9 | [进阶专题](./02.9-进阶专题.md) | 〔进阶〕Muon 分布式化、长序列工具箱（Cut-CE/2D CP）、FSDP vs TP+PP 选型 |
 | 03 | [Transformer 与模型子系统](./03-Transformer与模型子系统.md) | Spec 机制、TransformerBlock/Layer、GPT/Mamba/Hybrid/MoE/多模态 |
 | 04 | [分布式训练与优化器](./04-分布式训练与优化器.md) | DDP / FSDP、梯度桶、DistributedOptimizer、梯度裁剪与缩放 |
 | 05 | [数据集与分词器](./05-数据集与分词器.md) | IndexedDataset、BlendedDataset、GPTDataset、tokenizers |
