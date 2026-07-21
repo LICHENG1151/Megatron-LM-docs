@@ -26,6 +26,25 @@ flowchart TD
 
 入口脚本只声明「做什么」，`pretrain()` 负责「怎么跑」（初始化、循环、检查点）。这种**回调反转**让同一套训练引擎服务于 GPT/Mamba/VLM/RL 等所有模型。
 
+> **Remark · 这里的「回调」是什么、为什么叫「回调反转」**
+>
+> **回调（callback）**：你把一个函数**当参数传给别人**，别人在合适的时机「回过头来调用」它。你定义「做什么」，框架决定「何时调、怎么跑」。
+>
+> **三个回调**：`pretrain_gpt.py:416` 把自己定义、但**不自己调用**的函数交给 `pretrain()`：
+> ```python
+> pretrain(full_config,
+>          train_valid_test_datasets_provider,  # 回调①：怎么造数据集
+>          model_provider,                      # 回调②：怎么造模型
+>          forward_step)                        # 回调③：怎么取 batch + 算 loss
+> ```
+> 对应 `pretrain()` 签名的 `train_valid_test_dataset_provider / model_provider / forward_step_func`（`training.py:1029`）。
+>
+> **控制权是反的（IoC / 好莱坞原则「Don't call us, we'll call you」）**：正常是「你调库」，这里是「库调你」。`pretrain()` 是通用引擎，掌握训练骨架（初始化→建模→建数据→主循环→检查点，见 §3），但**故意不知道**模型细节；跑到需要处才回调：该建模型 → 调 `model_provider()`（`get_model` 内）；该建数据 → 调 provider；每步该前向算 loss → 调 `forward_step_func(...)`（`training.py:2268`，在 `train_step` 里）。
+>
+> **为什么这么设计**：把**随模型而变**的部分（模型/数据/loss）外置成回调，把**不变**的部分（初始化/循环/检查点/容错）锁进 `pretrain()`。于是 `pretrain_gpt/mamba/vlm.py`、`train_rl.py` 各传不同回调、**复用同一个 `pretrain()`**；新增模型只写三个回调，不碰主循环。
+>
+> **与 [02.3 §2.5](./02.3-通信原语速查.md) 的 hook 的关系**：都是「框架回调你的函数」（控制反转），但形式不同——**回调**是把函数**当参数传进** `pretrain(...)`、在流程固定节点被调（流程编排型）；**hook** 是**注册**到某事件点、事件发生时被调（事件触发型，如反向 backward post-hook）。
+
 `pretrain_gpt.py` 的关键导入印证了这种分工：
 
 ```49:62:pretrain_gpt.py
