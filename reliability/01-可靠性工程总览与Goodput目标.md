@@ -219,4 +219,4 @@ ETTR_max ≈ 1 − √(2δ/M) − R/M
 - [Checkpointing à la Young/Daly: An Overview](http://www.ittc.ku.edu/~sun/publications/ic322.pdf)
 - [From Detection to Recovery: Operational Analysis on LLM Pre-training (arXiv 2605.09370)](https://arxiv.org/pdf/2605.09370)
 
-返回：[00 · 文档集导航](./00-README.md) ｜ 上级：[Megatron-LM-docs 总导航](../00-README.md)
+返回：[00 · 文档集导航](./00-README.md) ｜ 上级：[Megatron-LM-docs 总导航](../README.md)
