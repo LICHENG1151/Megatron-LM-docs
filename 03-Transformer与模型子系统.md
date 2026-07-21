@@ -170,23 +170,77 @@ flowchart LR
 
 ---
 
-## 5. 模型如何被「点亮」并行能力
+## 5. 模型结构如何与并行逻辑对接
 
-模型代码本身**不直接写并行逻辑**，而是通过：
+> 第二章已经把并行原语的**理论与实现**讲透（[02.4 组构建](./02.4-并行组构建与通信详解.md)/[02.5 TP](./02.5-张量并行实现详解.md)/[02.6 PP](./02.6-流水线并行与1F1B调度.md)/[02.7 CP](./02.7-上下文并行.md)/[02.8 EP](./02.8-专家并行.md)）。本节只回答一件事：**这里定义的模型结构（L2/L3），到底在哪几个点、用什么机制"接上"那些已经造好的并行能力**——包括你自己写一个新模型时要遵守什么。
 
-1. 用 `ColumnParallelLinear`/`RowParallelLinear` 替代普通 `nn.Linear`（TP 自动生效）。
-2. `TransformerBlock` 按 `parallel_state` 的 PP rank 只构建本 stage 的层（PP 自动生效）。
-3. 注意力内部按 CP 组通信（CP 自动生效）。
-4. MoE 层通过 token dispatcher 走 EP 组（EP 自动生效）。
+核心结论：**模型代码里几乎看不到并行**。它不 all-reduce、不查 rank、不切 tensor，而是靠下面三条"接缝"把并行能力**注入**进来，一切从 `parallel_state`（第二章建好的并行组"真相源"）自动流出。
+
+### 5.1 接缝一：配置驱动——`TransformerConfig ← ModelParallelConfig`
+
+一切并行的"开关与尺寸"都从**配置**进来，模型不自己决定：
+
+```
+parallel_state.initialize_model_parallel(tp, pp, cp, ep, …)   ← 第二章：先织好所有进程组
+        │  把 world 切成 TP×CP×EP×DP×PP 的多维网格
+        ▼
+ModelParallelConfig   (tensor_model_parallel_size / pipeline_… / context_… / sequence_parallel …)
+        ▼  被继承
+TransformerConfig     ← 模型结构超参 + 上面这些并行尺寸，合成一个对象
+        ▼  一路透传
+GPTModel / TransformerBlock / Attention / MLP …   ← 构件按 config 里的并行尺寸自我裁剪
+```
+
+- `TransformerConfig(ModelParallelConfig)`（03 §2 已列）是**唯一入口**：结构超参和并行尺寸捏在同一个对象里，逐层透传。
+- 于是"开多大 TP/PP/CP/EP"是 **L1 配置层**的事；L2/L3 只是**读** config、按尺寸把自己切开，从不硬编码 `world_size/rank`。
+
+### 5.2 接缝二：四个挂接点——每个都对应第二章一节
+
+模型结构在**四个确定的位置**接入并行，每处都只是"换算子/换组装方式"，通信细节留在第二章讲的原语里：
+
+| 挂接点 | 模型侧做的事（L3 代码） | 接入的并行原语（第二章） |
+|---|---|---|
+| **Attention / MLP 的 Linear** | QKV/升维用 `ColumnParallelLinear`、输出/降维用 `RowParallelLinear`，一列一行配对 | **TP/SP** → [02.5](./02.5-张量并行实现详解.md) |
+| **`TransformerBlock` 建层** | 按 PP rank 只 `build` 本 stage 的层；首/尾 stage 才建 embedding/输出头 | **PP** → [02.6](./02.6-流水线并行与1F1B调度.md) |
+| **`DotProductAttention` 内部** | 注意力按 CP 组做 ring/all-gather + online-softmax 累加；数据侧 zigzag 重排 | **CP** → [02.7](./02.7-上下文并行.md) |
+| **MoE 的 `TokenDispatcher`** | 路由后经 all-to-all 把 token 发到专家所在卡，算完 combine 收回 | **EP** → [02.8](./02.8-专家并行.md) |
 
 ```mermaid
 flowchart TD
-    GPT["GPTModel.forward"] --> EMB["embedding (词表并行)"]
+    GPT["GPTModel.forward"] --> EMB["embedding (词表并行 VocabParallelEmbedding)"]
     EMB --> BLK["TransformerBlock<br/>(只含本 PP stage 的层)"]
     BLK --> LAYER["TransformerLayer × N"]
-    LAYER --> ATTN["Attention<br/>QKV列并行 → 核心attn → 输出行并行"]
-    LAYER --> FFN["MLP 或 MoE"]
+    LAYER --> ATTN["Attention<br/>QKV列并行 → 核心attn(CP累加) → 输出行并行"]
+    LAYER --> FFN["MLP(列升维/行降维) 或 MoE(EP all-to-all)"]
     BLK --> HEAD["输出投影 + VocabParallelCrossEntropy"]
+```
+
+> 注意"配对"不是随意的：列并行的输出正好是行并行的输入，中间那次通信被**抵消**成子层末尾一次 all-reduce（TP）——这是 02.5 讲的，模型侧只需**成对使用**就自动享受，不用管通信在哪发。
+
+### 5.3 接缝三：Spec 机制——让"接哪种并行实现"可插拔
+
+`ModuleSpec` + `build_module()`（§1）决定每个位置**实例化哪个类**：注意力后端选 flash/fused、MLP 选 dense 还是 MoE、Linear 选 TE 版还是本地并行版。**换 spec 就换并行实现，模型主干代码一行不改**——`gpt_layer_specs.py` 里的 "TE 版 / 本地版 / MoE 版 / MLA 版"就是同一骨架配不同 spec。
+
+### 5.4 自定义模型要遵守的"契约"
+
+正因为并行是**注入**而非**内嵌**的，你写一个新模型（Mamba/Hybrid 就是这么加进来的）时，**不需要写任何并行代码**，只要遵守下面几条契约，就能白嫖第二章所有并行：
+
+1. **继承对的基类**：`MegatronModule`（拿到 `sharded_state_dict` → 分布式 ckpt 自动可切/可重切，见 [08 检查点](./08-检查点与重切分.md)）；语言模型再继承 `LanguageModule`（拿到 logits、PP 首尾词嵌入 tying、loss）。
+2. **接受并透传 `TransformerConfig`**：所有子模块从同一 config 读并行尺寸，别自己 `torch.distributed` 建组。
+3. **线性层一律用并行版**：`Column/RowParallelLinear`，并遵守"列-行配对"；词表相关用 `VocabParallel*`。
+4. **用 spec 组装、`build_module()` 实例化**：不要在 `__init__` 里 `new` 死具体类，好处是后端/并行实现可换。
+5. **按 PP 切层**：层堆叠交给 `TransformerBlock`（或仿它按 PP rank 只建本段），别在模型里一次性建满所有层。
+6. **需要新通信就用组接口**：从 `parallel_state.get_*_group()` 取进程组（[02.4](./02.4-并行组构建与通信详解.md)），别硬编码 rank/world_size。
+
+**你不需要做的**：手写 all-reduce/all-gather、判断 rank、切 tensor、写 DP 梯度同步（DP + 分布式优化器在**模型外面**包一层，见 [04](./04-分布式训练与优化器.md)）。做到以上契约，一个新结构就能和 TP/SP/CP/PP/EP/DP **正交组合**、开箱即用。
+
+```mermaid
+flowchart LR
+    CFG["TransformerConfig<br/>(含并行尺寸)"] -->|透传| M["你的新模型<br/>继承 MegatronModule/LanguageModule"]
+    SPEC["ModuleSpec"] -->|build_module| M
+    PS["parallel_state<br/>(第二章建好的组)"] -.就近查表.-> OP["Column/RowParallelLinear<br/>TokenDispatcher / CP 通信"]
+    M --> OP
+    OP -->|通信细节在第二章原语里| DONE["自动获得 TP/SP/CP/PP/EP"]
 ```
 
 ---
